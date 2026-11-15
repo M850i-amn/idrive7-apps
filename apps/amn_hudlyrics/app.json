@@ -2,7 +2,7 @@
   "id": "amn_hudlyrics",
   "title": "HUD Lyrics",
   "description": "Synced lyrics for the song playing over CarPlay (Apple Music, Spotify...), one line at a time in the head-up display. The centre screen shows the song, the lyrics as they are sung, and a status row that says what each part is doing. The HUD is experimental and off until you switch it on in Settings; it hides during route guidance and when a song has no synced lyrics, and shares the HUD with other HUD apps (one at a time). Read-only toward the car. Lyrics from LRCLIB (lrclib.net), its only internet host, through the Store's uplink. Needs the Cluster renderer tool from the Store.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "vendor": "amn",
   "loggingId": "OAH1",
   "internet": true,
@@ -44,7 +44,7 @@
       "label": "HUD lines",
       "type": "choice",
       "default": "1",
-      "options": [["1", "One line"], ["2", "Two lines (next one dim)"]]
+      "options": [["1", "One line"], ["2", "Two lines (next one dim)"], ["3", "Three lines (before, now, after)"]]
     },
     {
       "key": "size",

@@ -33,7 +33,7 @@ const LyricsLib = require('./lyrics');
 const http = require('./http');
 const MC = require('./music_cluster');
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const W = 1600, H = 520;
 const IFACES = [
     { iface: 'de.bmw.infotainment.a4a.carplay.CarPlayManager', instances: ['CarPlayManagerInst1'] },
@@ -162,7 +162,7 @@ mgu.run({
                 const t = cur ? { uri: cur.key, title: cur.title, artist: cur.artist, kind: 'track', duration: cur.duration, ad: false } : null;
                 mh.update({ setting: settings.get('hud') ? 'lyrics' : 'off', ok: !!cur, track: t, playing: !!(cur && cur.playing),
                     pos: position(), posFn: () => position(), lyrics: settings.get('hud') ? lyricsFor() : null,
-                    size: settings.get('size'), lines: settings.get('lines') === '2' ? 2 : 1 });
+                    size: settings.get('size'), lines: ({ '2': 2, '3': 3 })[settings.get('lines')] || 1 });
             };
             np.onChange(guard('change', (key) => {
                 if (/^CarPlayManager\//.test(key) && /\.projectedGuidanceActive$/.test(key)) {

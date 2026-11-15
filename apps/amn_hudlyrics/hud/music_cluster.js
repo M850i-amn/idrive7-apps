@@ -9,6 +9,14 @@
  *     calibration), centred on it, and stays above BMW's speed readout (x 150-355, y 314-378): upstream's HUD_SAFE
  *     (x 100, y 60, 600 x 360, centred on the whole 800 px) let long lines lose their ends at both sides and put the
  *     next line on the speed. The line playing wraps to two rows at most, the next line to one.
+ *   - 0.3.0, sharper and smaller: the HUD layer is one image the size of HUD_SAFE (460 x 200), placed on it and
+ *     shown 1:1, where upstream drew a 400 x 240 image over the whole HUD stretched 2x (soft, blocky edges). The
+ *     text sizes are HUD pixels (the kit font is baked at 24 / 32 / 44): Small 26, Medium 32 (sharpest), Large 38;
+ *     upstream's Medium came to about 49 px, about a third bigger (owner, first drive: too big). The upload stays the same size (460 x 200 vs 400 x 240 pixels).
+ *   - 0.3.0, three-line mode (s.lines === 3): the line before (dim, above), the line playing (white) and the next
+ *     (dim, below); at a new line all three slide up one place - the next grows and lights up into the middle, the
+ *     line just sung shrinks and dims into the top place, the oldest fades out upward, a new next fades in below.
+ *     Two-row line breaks are balanced (balance2()).
  * Everything else is upstream's.
  *
  * music_cluster.js - G's Music in the instrument cluster's centre map area (0.6.0), through the
@@ -82,11 +90,15 @@ const SAFE_TW = SAFE.w / 2;                          // the widest line in the t
 // the size's scale, at most SAFE's width (layoutFor())
 const BARS_SC = 3, BARS_W = 288, BARS_H = 54, BARS_FPS = 12;
 // the HUD (0.8.0): its target 800 x 480, the text image at half that, every line inside HUD_SAFE (HUD px)
-const HUD_W = 800, HUD_H = 480, HUD_TEXT_W = 400, HUD_TEXT_H = 240, Z_HUD = 70;
+const HUD_W = 800, HUD_H = 480, Z_HUD = 70;
 // HUD Lyrics: the measured visible window less a margin, and above the speed readout (upstream: x 100, y 60, 600 x 360)
 const HUD_SAFE = { x: 132, y: 108, w: 460, h: 200 };
-const HUD_CX = (HUD_SAFE.x + HUD_SAFE.w / 2) / 2;    // the text's centre in the text image (half the HUD's scale): 181
-const HUD_TW = HUD_SAFE.w / 2;                       // 300
+// HUD Lyrics 0.3.0: the text image IS that box, shown 1:1 (upstream: 400 x 240 over the whole HUD, at 2x)
+const HUD_TEXT_W = HUD_SAFE.w, HUD_TEXT_H = HUD_SAFE.h;
+const HUD_CX = HUD_SAFE.w / 2;                       // the text's centre in the text image
+const HUD_TW = HUD_SAFE.w - 12;                      // the widest line: 448
+// the HUD's text sizes in HUD px per size setting (the line playing; the next line ~0.65 of it)
+const HUD_SIZES = { small: { cur: 26, next: 18 }, medium: { cur: 32, next: 22 }, large: { cur: 38, next: 26 } };
 const BARS_COLS = 13;                                // dirty-rect column groups (3 bars each; the client merges at 16)
 const BAND = 16;                                     // rows per dirty-rect band of the text image
 const POLL_MS = 1000, HOLD_MS = 3000, LOAD_RETRY_MS = 30000, RECONNECT_MS = 8000;
@@ -178,7 +190,8 @@ function lyricAt(lines, pos) {
     let n = i + 1;
     while (n < lines.length && !lines[n].text) n++;                 // the next line with words
     const e = i >= 0 ? Math.max(0, Math.min(1, (p - lines[i].t) / SCROLL_MS)) : 1;
-    return { i, cur: i >= 0 ? lines[i].text : '', next: n < lines.length ? lines[n].text : '', prev: i > 0 ? lines[i - 1].text : null, e };
+    return { i, cur: i >= 0 ? lines[i].text : '', next: n < lines.length ? lines[n].text : '', prev: i > 0 ? lines[i - 1].text : null,
+        prev2: i > 1 ? lines[i - 2].text : null, e };
 }
 /** s cut (by characters, so also a long word or CJK) to width w with '...', or s when it fits. */
 function fitText(cv, s, size, w, opts) {
@@ -222,6 +235,21 @@ function wrapText(cv, s, size, w, max, opts) {
     return out.slice(0, max).map((l, k) => k === max - 1 || cv.textWidth(l, size, opts) > w ? fitText(cv, l, size, w, opts) : l);
 }
 /**
+ * HUD Lyrics 0.3.0: s in two rows broken at the space that makes the wider row narrowest (both within w), as
+ * Apple Music breaks a long line; null when no break fits. wrapText() fills the first row first ("... down the /
+ * miles we owe"); this gives "Every streetlight counting / down the miles we owe".
+ */
+function balance2(cv, s, z, w, opts) {
+    const words = String(s || '').split(' ').filter(Boolean);
+    let best = null, bestW = Infinity;
+    for (let k = 1; k < words.length; k++) {
+        const a = words.slice(0, k).join(' '), b = words.slice(k).join(' ');
+        const m = Math.max(cv.textWidth(a, z, opts), cv.textWidth(b, z, opts));
+        if (m <= w && m < bestW) { bestW = m; best = [a, b]; }
+    }
+    return best;
+}
+/**
  * 0.7.5: a line fitted to width w: at its size if it fits; else shrunk (down to shrink x size); else, with
  * max 2 or more, wrapped to two lines at the largest size from wrap x size down to min that fits them whole
  * (0.8.0: then three, up to max); else at min, cut with '...'. { size, lines } with every line at most w wide.
@@ -237,8 +265,11 @@ function fitLines(cv, s, f, w, opts) {
         // 0.8.0: two lines at any size down to min first, then three (and so on up to max)
         for (let n = 2; n <= f.max; n++) {
             for (let z = Math.floor(f.size * (f.wrap || 0.9) * 4) / 4; z >= f.min; z -= 0.25) {
-                const ls = wrapText(cv, s, z, w, n, opts);
-                if (ls.join(' ').replace(/\s+/g, '') === s.replace(/\s+/g, '') && ls.every((l) => cv.textWidth(l, z, opts) <= w)) return { size: z, lines: ls };
+                let ls = wrapText(cv, s, z, w, n, opts);
+                if (ls.join(' ').replace(/\s+/g, '') === s.replace(/\s+/g, '') && ls.every((l) => cv.textWidth(l, z, opts) <= w)) {
+                    if (n === 2) ls = balance2(cv, s, z, w, opts) || ls;    // HUD Lyrics: two even rows
+                    return { size: z, lines: ls };
+                }
             }
         }
         return { size: f.min, lines: wrapText(cv, s, f.min, w, f.max, opts) };
@@ -254,7 +285,7 @@ function fitLines(cv, s, f, w, opts) {
 function textKey(v) {
     const a = v.anim == null ? 1 : v.anim;
     return [v.mode, v.title, v.artist, v.paused ? 1 : 0, v.cur, v.next, v.gap ? 1 : 0, Math.round((v.prog || 0) * 200), v.accent, v.lay || '',
-        a, a < 1 ? v.prev : '', v.one ? 1 : 0].join('\u0001');
+        a, a < 1 || v.three ? v.prev : '', v.one ? 1 : 0, v.three ? 1 : 0, v.three && a < 1 ? v.prev2 : ''].join('\u0001');
 }
 /**
  * 0.7.5: the text image's layout: 0.7.4's (in its 544 x 240 px), scaled by the size's scale about the centre; each
@@ -271,10 +302,11 @@ function layoutFor(place, size) {
     let L;
     if (hud) {
         L = {
-            // HUD Lyrics: higher than upstream (y 128 / 124 / 186), two rows at most, the next line one row above the speed
-            cur: { size: sc(34), min: sc(25), shrink: 0.8, wrap: 0.9, max: 2, y: at(108), gap: sc(6) },
-            dots: { size: sc(38), y: at(104) },
-            next: { size: sc(22), min: sc(17), shrink: 0.8, wrap: 0.95, max: 1, gap: sc(3), y: at(154) },
+            // HUD Lyrics 0.3.0: HUD px inside the 460 x 200 box at HUD (132, 108); baselines 109 (HUD 217) and 184 (HUD 292,
+            // above the speed readout at 314); the line playing two rows at most, the next line one
+            cur: { size: HUD_SIZES[Z].cur, min: Math.round(HUD_SIZES[Z].cur * 0.8), shrink: 0.8, wrap: 0.9, max: 2, y: 109, gap: 6 },
+            dots: { size: HUD_SIZES[Z].cur, y: 105 },
+            next: { size: HUD_SIZES[Z].next, min: Math.round(HUD_SIZES[Z].next * 0.8), shrink: 0.8, wrap: 0.95, max: 1, gap: 3, y: 184 },
         };
     } else {
         const bw = Math.min(SAFE.w, Math.round(BARS_W * BARS_SC * S)), bh = Math.round(bw * BARS_H / BARS_W);
@@ -292,6 +324,16 @@ function layoutFor(place, size) {
         };
     }
     L.id = id; L.place = P; L.size = Z; L.S = S; L.W = W; L.H = H; L.TW = TW;
+    if (hud) {
+        // HUD Lyrics 0.3.0, three lines: before at 38 (HUD 146), playing at 100 (two rows at most), next at 168 (HUD 276)
+        L.three = Object.assign({}, L, {
+            prev: Object.assign({}, L.next, { y: 38, max: 1 }),
+            cur: Object.assign({}, L.cur, { y: 100 }),
+            dots: Object.assign({}, L.dots, { y: 96 }),
+            next: Object.assign({}, L.next, { y: 168, max: 1 }),
+        });
+        L.three.three = null;
+    }
     LAYOUTS[id] = L;
     return L;
 }
@@ -303,7 +345,7 @@ const BARS_SHOW_W = LAYOUT.bars.w, BARS_SHOW_H = LAYOUT.bars.h, BARS_X = LAYOUT.
  * Canvas: kit/canvas's.
  */
 function textImage(Canvas, v, Lay) {
-    const Y = Lay || LAYOUT, W = Y.W, H = Y.H, cv = new Canvas(W, H), hud = Y.place === 'hud';
+    const Y0 = Lay || LAYOUT, Y = v.three && Y0.three ? Y0.three : Y0, W = Y.W, H = Y.H, cv = new Canvas(W, H), hud = Y.place === 'hud';
     cv.clear('#000000');
     const acc = lift(v.accent || '#3ad0ff', 170), dim = '#8a8f99', lit = '#ffffff', L = { literal: true }, B = { font: 'bold', literal: true };
     const cx = hud ? HUD_CX : W / 2, TW = Y.TW;          // HUD Lyrics: centred on the HUD's visible window
@@ -334,6 +376,22 @@ function textImage(Canvas, v, Lay) {
             const r = fitLines(cv, v.next, Y.next, TW, L), lh = r.size + Y.next.gap;
             r.lines.forEach((l, j) => cv.text(l, cx, y + j * lh, r.size, col, { literal: true, align: 'center' }));
         };
+        // HUD Lyrics, three-line mode: still, and the slide up one place
+        if (v.three) {
+            const pc = '#5d636d', PY = Y.prev.y;
+            const before = (txt, y, col) => { if (!txt) return; const r = fitLines(cv, txt, Y.prev, TW, L); cv.text(r.lines[0], cx, y, r.size, col, { literal: true, align: 'center' }); };
+            if (a >= 1) { before(v.prev, PY, pc); block(P, cc, P.y0, 1); if (v.next) nextAt(Y.next.y, nc); return; }
+            const up = Y.cur.y - PY;
+            before(v.prev2, PY - up * a, mixc(pc, BK, Math.min(1, a * 2.5)));              // the oldest: up and out
+            if (v.prev !== null && v.prev !== undefined) {                                  // the line just sung: into the top place
+                const O = place(v.prev), kO = Math.min(1, Y.prev.size / O.size);
+                block(O, mixc(v.prev ? c : acc, pc, a), O.y0 + (PY - O.y0) * a, 1 + (kO - 1) * a);
+            }
+            const k0 = Math.min(1, Y.next.size / P.size);                                   // the next: into the middle
+            block(P, mixc(nc, cc, a), Y.next.y + (P.y0 - Y.next.y) * a, k0 + (1 - k0) * a);
+            if (v.next && a > 0.5) nextAt(Y.next.y + (Y.next.y - Y.cur.y) * 0.3 * (1 - a) * 2, mixc(BK, nc, (a - 0.5) * 2));
+            return;
+        }
         if (a >= 1) { block(P, cc, P.y0, 1); if (v.next) nextAt(Y.next.y, nc); return; }
         // HUD Lyrics, one-line mode: the old line fades out in place, then the new one fades in in place
         if (v.one) {
@@ -610,6 +668,8 @@ class MusicCluster {
             v.cur = L.cur; v.next = L.next; v.gap = L.i < 0 || !L.cur;
             v.prev = L.prev;
             v.one = s.lines === 1;                    // HUD Lyrics: one line, no next line
+            v.three = s.lines === 3;                  // HUD Lyrics: before, playing, after
+            v.prev2 = L.prev2;
             if (v.one) v.next = '';
             v.anim = s.playing && this._animOk() && L.e < 1 ? Math.round(easeOut(L.e) * ANIM_STEPS) / ANIM_STEPS : 1;
         }
@@ -644,7 +704,9 @@ class MusicCluster {
         const v = this._view(mode, now), key = textKey(v), Lay = this.lay;
         if (!this.text) {
             const img = textImage(this.Canvas, v, Lay);
-            const ref = this._make(this.hud ? Z_HUD : Z_TEXT, 0, 0, this.hud ? HUD_W : MAP_W, this.hud ? HUD_H : MAP_H, img, 'bilinear', ANIM_FPS);
+            // HUD Lyrics 0.3.0: the HUD's image placed on HUD_SAFE at 1:1 (upstream: the whole HUD, at 2x)
+            const ref = this.hud ? this._make(Z_HUD, HUD_SAFE.x, HUD_SAFE.y, HUD_SAFE.w, HUD_SAFE.h, img, 'bilinear', ANIM_FPS)
+                : this._make(Z_TEXT, 0, 0, MAP_W, MAP_H, img, 'bilinear', ANIM_FPS);
             if (!ref) return;
             this.text = { ref, state: 'new', img, key, madeAt: now, errAt: 0, anim: v.anim };
             this._send(ref, null, img.d, 'text');
