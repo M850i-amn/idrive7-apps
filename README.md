@@ -5,7 +5,7 @@ Apps for BMW head units with **iDrive 7** (MGU), installed from the car through
 
 | App | What it does |
 |---|---|
-| [HUD Lyrics](apps/amn_hudlyrics/README.md) | Synced lyrics for the song playing over CarPlay, one line at a time, for the head-up display. Version 0.1.0 shows them on the centre screen only. |
+| [HUD Lyrics](apps/amn_hudlyrics/README.md) | Synced lyrics for the song playing over CarPlay, one line at a time in the head-up display (experimental, off until switched on), and a Now Playing page on the centre screen. |
 
 ## Install
 
@@ -13,7 +13,7 @@ Apps for BMW head units with **iDrive 7** (MGU), installed from the car through
 2. Pick **HUD Lyrics** and tap **Install**. The head unit builds it from this repository.
 3. Restart the head unit once (Store **Settings > Restart head unit**).
 
-Needs root access, mgu-store, and internet through the Store's uplink for the lyrics.
+Needs root access, mgu-store, the Store's **Cluster renderer** tool for the HUD, and internet through the Store's uplink for the lyrics.
 
 ## Safety
 

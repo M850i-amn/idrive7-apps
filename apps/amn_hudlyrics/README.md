@@ -1,29 +1,76 @@
 # HUD Lyrics
 
-Synced lyrics for the song the car plays (Apple Music or Spotify over CarPlay), one line at a time, meant for
-the head-up display. iDrive 7 · package `amn_hudlyrics` · version 0.1.0 (step 1).
+Synced lyrics for the song playing over CarPlay (Apple Music, Spotify...), one line at a time in the
+head-up display, with a Now Playing page on the centre screen. iDrive 7 · package `amn_hudlyrics` · version 0.2.0.
 
-## Step 1 (this version)
+## Centre screen
 
-The centre screen shows the song, its artist, the time in it, what LRCLIB has for it, and the lyric line
-playing. Nothing is drawn on the HUD or the cluster yet. The HUD comes in step 2.
+The song, its artist and album and a progress line on the left; the lyrics on the right, the line being sung
+large and white, the line before and the line after dim. Along the bottom, four status pills say what each
+part is doing, each with a coloured dot (green working, amber waiting, grey off, red a problem):
 
-## What it uses
+| Pill | Says |
+|---|---|
+| Song | Playing, Paused, or Nothing playing |
+| Timing | From the car, or "Tap Song just started" for a source that sends no time |
+| Lyrics | Synced (and how many lines), Searching, Not synced, Not on LRCLIB, Car offline |
+| HUD · experimental | Off, Showing lyrics, Waiting - HUD in use, Hidden - route guidance, Needs Cluster renderer |
 
-- **Car:** reads the track from BMW's MediaPlayer, CarPlayManager, HmiMediaState and DynamicMediaPlayer
-  interfaces. It subscribes and reads only; it never writes a value or calls a method.
-- **Internet:** one host, `lrclib.net`, through the Store's uplink. `net/http.js` refuses any other host.
-- **Log:** the track's title, artist and timing, and the lyrics lookup's result. No other value from the car.
-- **No** accounts, album art, analytics or crash-report uploads.
+If the HUD stays dark, the pills say which part stopped.
+
+## The HUD (experimental)
+
+Off until you switch on **Settings > Lyrics in the HUD (experimental)**. Then, while a song with synced lyrics
+plays, the line being sung shows in the HUD, inside its visible window and above the speed readout. A new line
+fades in where the last one was. It hides during route guidance (BMW navigation, CarPlay, Android Auto), when
+paused for 30 s, and for a song without synced lyrics.
+
+Only one app can draw in the HUD at a time: with HUD Lyrics on, other HUD apps (bimmer-lab HUD Widgets, G's Dash
+HUD, Redline's HUD) wait, and the other way round. Needs the **Cluster renderer** tool from the Store. If a
+black box stays in the HUD after switching off or removing the app, restart the head unit (Store > Settings >
+Restart head unit).
+
+The text area comes from measurements on a 2020 X3. If it sits off-centre on your car, report it.
 
 ## Settings
 
-- **Lines shown:** One line (default) or two lines, the next one dim.
-- **Lyrics timing:** moves the lyrics up to 3 s earlier or later.
-- **Colours.**
+| Setting | Choices | Default |
+|---|---|---|
+| Lyrics in the HUD (experimental) | on / off | off |
+| HUD lines | One line, or Two lines (next one dim) | One line |
+| HUD text size | Small, Medium, Large | Medium |
+| Show during navigation | on / off | off |
+| Lyrics timing | 3 s earlier to 3 s later | 0 |
+
+**Song just started** (bar button): for a source that sends no time, tap it as the song starts.
+
+## What it uses
+
+- **Car:** reads the track from BMW's MediaPlayer, CarPlayManager, HmiMediaState and DynamicMediaPlayer, and
+  route guidance from NavigationStatus and the Android Auto manager. It subscribes and reads only; it never
+  writes a value or calls a method.
+- **Internet:** one host, `lrclib.net`, through the Store's uplink. `net/http.js` refuses any other host.
+- **HUD:** the Store's Cluster renderer, through its own client on the head unit.
+- **Log:** the track's title, artist and timing, the lyrics lookup's result and the HUD layer's state.
+- **No** accounts, album art, analytics or crash-report uploads.
 
 ## Credits
 
 Built from [arefahmad/idrive7-apps](https://github.com/arefahmad/idrive7-apps)' Car Lyrics (MIT): `car/nowplaying.js`,
-`net/http.js` and the clock in `main.js`. `stage/lyrics.js` is from nickgcode's G's Music (MIT, `LICENSE`). See
-the repository's NOTICE.
+`net/http.js` and the song clock. `stage/lyrics.js` and `hud/` (the HUD layer) are from nickgcode's G's Music
+(MIT, `LICENSE`). Fonts: Inter (SIL Open Font License, `data/fonts/LICENSE-Inter.txt`). See the repository's NOTICE.
+
+## Screens
+
+Rendered on a computer from the app's own drawing code, with a made-up song and made-up lyrics; not photos of a car.
+
+![Now Playing](../../docs/screenshots/amn_hudlyrics/screen-playing.png)
+
+![Nothing playing](../../docs/screenshots/amn_hudlyrics/screen-empty.png)
+
+The HUD, one line (default) and two lines, over a mock windshield. Green: the HUD's visible window measured on a
+2020 X3. Orange: where the text may go. Grey: BMW's speed readout.
+
+![HUD, one line](../../docs/screenshots/amn_hudlyrics/hud-one-line-medium.png)
+
+![HUD, two lines](../../docs/screenshots/amn_hudlyrics/hud-two-lines-medium.png)
