@@ -5,6 +5,8 @@
 // Copied 2026-11 for aurelm-tvhplayer (native/tvh-player): each frame carries its PicStruct (an interlaced stream is told).
 // Modified 2026-11 for aurelm-emby (GPL-3.0 section 5(a)), from aurelm-airplay's copy (native/uxplay-mgu/video/src):
 // frames in display order (films have B frames) and a film is fitted whole, never cropped.
+// Modified 2026-11 for amn-iptv (GPL-3.0 section 5(a)): 10-bit HEVC (Main 10: most 4K films) decoded as P010 with the
+// hardware's MSB alignment (Shift 1), converted to 8-bit NV12 by VPP.
 #include "decoder_msdk.h"
 #include "nal_reader.h"
 
@@ -13,6 +15,7 @@ int hevc_plugin(mfxSession s, void *plugin);   /* probe.cpp: the unit's HEVC dec
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -84,6 +87,10 @@ std::string mfx_error(const char *call, mfxStatus s)
 }
 
 mfxU16 align16(uint32_t v) { return (mfxU16)((v + 15) & ~15u); }
+
+/* amn-iptv: 10-bit 4:2:0 (the trimmed mfxstructures.h has no MFX_FOURCC_P010) and HEVC Main 10's profile number */
+const mfxU32 kFourccP010 = MFX_MAKEFOURCC('P', '0', '1', '0');
+const mfxU16 kProfileHevcMain10 = 2;
 mfxU16 even(double v) { return (mfxU16)((uint32_t)(v + 0.5) & ~1u); }
 
 const mfxU64 kNoTimeStamp = (mfxU64)-1;   /* MFX_TIMESTAMP_UNKNOWN */
@@ -256,6 +263,25 @@ bool Decoder::State::start(const AccessUnit &au)
     if (sts < MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoDECODE_DecodeHeader", sts));
 
+    /* amn-iptv: 10-bit HEVC. DecodeHeader names a P010 picture; Intel's hardware decoder writes each 10-bit sample in
+     * the high bits of its 16-bit word, which the surface has to say (Shift 1), and this MSDK can leave the bit depth
+     * and Shift unset. Without both, every frame of a Main 10 film failed (0.3.1 in the car: sound, no picture,
+     * "nothing decoded"). VPP then converts P010 to the 8-bit NV12 of the frame file (its output: 8 bits, Shift 0). */
+    {
+        mfxFrameInfo &fi = dec.mfx.FrameInfo;
+        const bool ten = fi.FourCC == kFourccP010 || fi.BitDepthLuma > 8 || fi.BitDepthChroma > 8 ||
+                         (hevc && dec.mfx.CodecProfile == kProfileHevcMain10);
+        if (ten) {
+            fi.FourCC = kFourccP010;
+            fi.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
+            if (fi.BitDepthLuma <= 8) fi.BitDepthLuma = 10;
+            if (fi.BitDepthChroma <= 8) fi.BitDepthChroma = fi.BitDepthLuma;
+            fi.Shift = 1;
+            fprintf(stderr, "tvh-player: video: %u-bit %ux%u (P010, MSB-aligned) to 8-bit NV12\n",
+                    (unsigned)fi.BitDepthLuma, (unsigned)fi.CropW, (unsigned)fi.CropH);
+        }
+    }
+
     /* One frame in flight: lowest latency. */
     dec.AsyncDepth = 1;
     dec.IOPattern = MFX_IOPATTERN_OUT_OPAQUE_MEMORY;
@@ -276,6 +302,9 @@ bool Decoder::State::start(const AccessUnit &au)
     out = in;
     out.FourCC = MFX_FOURCC_NV12;
     out.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
+    /* amn-iptv: the frame file is 8-bit, whatever the input (a 10-bit input's depth and Shift are not copied) */
+    out.BitDepthLuma = out.BitDepthChroma = in.BitDepthLuma ? 8 : 0;
+    out.Shift = 0;
     out.PicStruct = MFX_PICSTRUCT_PROGRESSIVE;
     out.Width = align16(w);
     out.Height = align16(h);
