@@ -11,7 +11,7 @@
  *             | { op: 'film-play', film } | { op: 'film-seek', pos } | { op: 'film-pause' } | { op: 'film-resume' } (film.js)
  *             | { op: 'ask', id, what: 'channels', cat } | { what: 'search', q } | { what: 'now', ids } | { what: 'epg', sid }
  *             | { what: 'logo', icon } | { what: 'film-cats' } | { what: 'films', cat } | { what: 'film-info', vid }
- *             | { what: 'series-cats' } | { what: 'series', cat } | { what: 'series-info', vid }
+ *             | { what: 'series-cats' } | { what: 'series', cat } | { what: 'series-info', vid } | { what: 'vod-search', kind, q }
  *   child  -> { ev: 'status', status } | { ev: 'signin', id, ok, account | error } | { ev: 'categories', at, categories }
  *             | { ev: 'playback', status } | { ev: 'player-start', id, env? } | { ev: 'player-ctl', id, line } | { ev: 'player-stop', id }
  *             | { ev: 'signed-out', why } | { ev: 'log', line } | { ev: 'ready', uid } | { ev: 'answer', id, ok, value | error }
@@ -113,7 +113,7 @@ function run(account) {
     forget();
     refresh(true);
 }
-function stop() { running = false; clearTimeout(timer); pb.stop(); fm.stop(); vodKept.clear(); }
+function stop() { running = false; clearTimeout(timer); pb.stop(); fm.stop(); vodKept.clear(); vodAll.clear(); }
 
 const view = (c) => ({ id: c.id, name: ascii(c.name), icon: c.icon, cat: c.cat, num: c.num, hevc: c.hevc });
 
@@ -141,9 +141,12 @@ function everything() {
     return allLoading;
 }
 async function search(q) {
+    return rank(await everything(), q, 80).map(view);
+}
+/** list entries ({ key: lowercase ASCII name, name }) matching every word of q, best first, n at most */
+function rank(list, q, n) {
     const words = ascii(q).toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
-    const list = await everything();
     // whole words first ("rds" finds RDS before Thunderbirds), then a name that starts with them, then anywhere
     const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const whole = words.map((w) => new RegExp('(^|[^a-z0-9])' + esc(w) + '($|[^a-z0-9])'));
@@ -155,7 +158,24 @@ async function search(q) {
         hits.push({ c: list[i], rank });
     }
     hits.sort((x, y) => x.rank - y.rank || x.c.name.length - y.c.name.length);
-    return hits.slice(0, 80).map((h) => view(h.c));
+    return hits.slice(0, n).map((h) => h.c);
+}
+/* every film or every series of the account, for search: loaded on the first search, kept 30 minutes */
+const vodAll = new Map();   // 'movies' | 'series' -> { at, list, loading }
+function allVod(kind) {
+    const k = vodAll.get(kind);
+    if (k && k.list && Date.now() - k.at < 30 * 60000) return Promise.resolve(k.list);
+    if (k && k.loading) return k.loading;
+    const loading = (kind === 'series' ? xt.allSeries() : xt.allFilms()).then((l) => {
+        const list = l.map((x) => Object.assign({}, x, { name: ascii(x.name), key: ascii(x.name).toLowerCase() }));
+        vodAll.set(kind, { at: Date.now(), list });
+        return list;
+    }, (e) => { vodAll.delete(kind); throw e; });
+    vodAll.set(kind, { loading });
+    return loading;
+}
+async function vodSearch(kind, q) {
+    return rank(await allVod(kind === 'series' ? 'series' : 'movies'), q, 60).map((x) => { const v = Object.assign({}, x); delete v.key; return v; });
 }
 /** what is on now and next, per channel: asked 4 at a time, kept until the programme on now ends */
 async function nowOf(ids) {
@@ -198,6 +218,7 @@ function answer(m) {
     const kept = (key, fn) => { const k = vodKept.get(key); if (k && Date.now() - k.at < 600000) return Promise.resolve(k.v);
         return fn().then((v) => { vodKept.set(key, { at: Date.now(), v }); if (vodKept.size > 200) vodKept.clear(); return v; }); };
     const cats = (l) => l.map((c) => ({ id: c.id, name: ascii(c.name) }));
+    if (m.what === 'vod-search') return reply(vodSearch(String(m.kind || ''), String(m.q || '')));
     if (m.what === 'film-cats') return reply(kept('fc', () => xt.filmCategories().then(cats)));
     if (m.what === 'films') return reply(kept('f:' + m.cat, () => xt.films(String(m.cat || '')).then((l) => l.map(A))));
     if (m.what === 'film-info') return reply(kept('fi:' + m.vid, () => xt.filmInfo(String(m.vid || '')).then(A)));

@@ -42,7 +42,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -50,8 +50,8 @@ const C = {
     accent: '#ef4a2c', accentDim: '#3a1a14', navy: '#1e2c3e', navyText: '#bfcadb', green: '#30d158', amber: '#ff9f0a', red: '#ff453a',
 };
 const PLATE = { card: [236, 112], guide: [150, 70], player: [190, 104] };
-const LOGO_SLOTS = 72, LOGO_ID0 = 200;
-const POSTER = { grid: [120, 180], detail: [200, 300], player: [72, 108] };
+const LOGO_SLOTS = 40, LOGO_ID0 = 200;   // mgu-render: 64 pictures per app at most, the kit's own among them
+const POSTER = { grid: [176, 264], detail: [200, 300], player: [72, 108], result: [64, 96] };
 /** 1:02:03 or 42:05 */
 const hms = (t) => { t = Math.max(0, Math.floor(t || 0)); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, x = t % 60; return (h ? h + ':' + ('0' + m).slice(-2) : m) + ':' + ('0' + x).slice(-2); };
 /** 1 h 42 min, or 42 min */
@@ -283,11 +283,22 @@ mgu.run({
             }
 
             /* ---------- scrolling (a finger dragged on a list) ---------- */
-            let drag = null, dragged = 0;
+            let drag = null, dragged = 0, scrub = null;   // scrub: a finger on a film's progress bar { r, pos }
             const regions = [];          // drawn each frame: { key, x, y, w, h, max (px) }
             const onDrag = guard('touch', (phase, x, y) => {
+                // a film's progress bar: the whole gesture is the bar's, the picture goes where the finger lifts
+                if (scrub || phase === 1) {
+                    const sr = scrub ? scrub.r : regions.filter((g) => g.seek && x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h)[0];
+                    if (sr) {
+                        const s = sr.seek, p = Math.max(0, Math.min(s.d - 5, (x - s.x) / s.w * s.d));
+                        if (phase === 3) { scrub = null; filmCmd('film-seek', { pos: Math.floor(p) }); }
+                        else scrub = { r: sr, pos: p };
+                        overlayUntil = Date.now() + 6000;
+                        return true;
+                    }
+                }
                 if (phase === 1) {
-                    const r = regions.filter((g) => x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h)[0];
+                    const r = regions.filter((g) => !g.seek && x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h)[0];
                     drag = r ? { key: r.key, y0: y, s0: scroll[r.key], max: r.max, moved: false } : null;
                     return false;
                 }
@@ -460,8 +471,13 @@ mgu.run({
             function drawVod(cv, A, x0, kind) {
                 const v = vod[kind];
                 loadVodCats(kind);
-                const colW = 300, rowH = 46, top = A.y + 64;
+                const colW = 260, rowH = 46, top = A.y + 64;
                 cv.text(kind === 'movies' ? 'Movies' : 'Series', x0 + 8, A.y + 38, 32, C.text, B);
+                const spx = x0 + colW + 18, spw = Math.min(460, A.right - spx);
+                cv.roundRect(spx, A.y + 4, spw, 46, 23, C.pill);
+                icon(cv, 'search', spx + 28, A.y + 27, C.grey);
+                cv.text(kind === 'movies' ? 'Search movies' : 'Search series', spx + 54, A.y + 35, 20, '#7a7a82', M);
+                btn(cv, 'vsearch_' + kind, spx, A.y + 4, spw, 46, () => { setSearchMode(kind); go('search'); }, 23);
                 glass(cv, x0, top, colW, A.bottom - top, 18, C.rail);
                 const cl = v.cats || [], visRows = Math.floor((A.bottom - top - 16) / rowH), maxC = Math.max(0, (cl.length - visRows) * rowH);
                 scroll.vcats = Math.min(scroll.vcats, maxC);
@@ -588,11 +604,20 @@ mgu.run({
                 const d = pb.duration || film.duration || 0, pos = pb.pos || 0, bw = A.right - tx, barY = by + 56;
                 cv.roundRect(tx, barY, bw, 8, 4, A_('#ffffff', 0.3));
                 if (d) {
-                    cv.roundRect(tx, barY, Math.max(8, Math.round(bw * Math.min(1, pos / d))), 8, 4, C.accent);
+                    const at = scrub ? scrub.pos : pos, kx = tx + Math.round(bw * Math.min(1, at / d));
+                    cv.roundRect(tx, barY, Math.max(8, kx - tx), 8, 4, C.accent);
+                    cv.circle(kx, barY + 4, scrub ? 14 : 9, C.text);
+                    if (scrub) {
+                        const lw = cv.textWidth(hms(at), 22, B) + 28;
+                        cv.roundRect(Math.max(tx, Math.min(A.right - lw, kx - lw / 2)), barY - 52, lw, 38, 19, A_('#000000', 0.8));
+                        cv.text(hms(at), Math.max(tx + lw / 2, Math.min(A.right - lw / 2, kx)), barY - 26, 22, C.text, Object.assign({ align: 'center' }, B));
+                    }
+                    // a finger along it (onDrag: the region's seek), or a tap on one of 20 steps where the kit has no drag
+                    regions.push({ key: 'seek', x: tx - 10, y: barY - 26, w: bw + 20, h: 60, max: 0, seek: { x: tx, w: bw, d } });
                     for (let i = 0; i < 20; i++) btn(cv, 'seek_' + i, tx + i * bw / 20, barY - 16, bw / 20, 40, () => filmCmd('film-seek', { pos: Math.floor(d * (i + 0.5) / 20) }), 0);
-                    cv.text('-' + hms(Math.max(0, d - pos)), A.right, barY + 32, 17, '#c8c8cc', Object.assign({ align: 'right' }, M));
+                    cv.text('-' + hms(Math.max(0, d - at)), A.right, barY + 32, 17, '#c8c8cc', Object.assign({ align: 'right' }, M));
                 }
-                cv.text(hms(pos), tx, barY + 32, 17, '#c8c8cc', M);
+                cv.text(hms(scrub ? scrub.pos : pos), tx, barY + 32, 17, '#c8c8cc', M);
                 const held = pb.state === 'paused' || pb.state === 'ended' || pb.state === 'error';
                 const acts = [['-30', () => skip(-30)], ['-10', () => skip(-10)], [held ? 'Play' : 'Pause', () => filmCmd(held ? 'film-resume' : 'film-pause')],
                     ['+10', () => skip(10)], ['+30', () => skip(30)], ['Stop', () => stopPlay()]];
@@ -788,30 +813,48 @@ mgu.run({
             }
             const search = { kb: null, field: { value: '', caret: 0, mask: false, max: 60 }, results: null, busy: false, at: 0, asked: '' };
             Object.defineProperty(search, 'text', { get: () => search.field.value });
+            search.mode = 'channels';
+            function setSearchMode(m) { if (search.mode === m) return; search.mode = m; search.results = null; search.asked = ''; search.at = 0; scroll.results = 0; }
             function runSearch() {
-                const q = search.text.trim();
+                const q = search.text.trim(), mode = search.mode;
                 if (q.length < 2 || q === search.asked || search.busy) return;
                 search.busy = true; search.asked = q; scroll.results = 0;
-                svc.ask({ cmd: 'search', q }, 130000).then((r) => {
+                const ask = mode === 'channels' ? svc.ask({ cmd: 'search', q }, 130000) : svc.ask({ cmd: 'vod-search', kind: mode, q }, 130000);
+                ask.then((r) => {
                     search.busy = false;
-                    if (search.text.trim() !== q) { search.asked = ''; return; }
-                    search.results = r.error ? { error: r.error, channels: [] } : { channels: r.channels || [] };
-                }, (e) => { search.busy = false; search.results = { error: e.message, channels: [] }; });
+                    if (search.text.trim() !== q || search.mode !== mode) { search.asked = ''; return; }
+                    search.results = r.error ? { error: r.error, channels: [], items: [] } : { channels: r.channels || [], items: r.items || [] };
+                }, (e) => { search.busy = false; search.results = { error: e.message, channels: [], items: [] }; });
             }
             setInterval(guard('search', () => { if (page === 'search' && Date.now() - search.at > 700) runSearch(); }), 300);
             function drawSearch(cv, A, x0) {
                 const kb = search.kb || (search.kb = new KB.Keyboard('abc'));
                 const y = A.y, h = 52, right = A.right;
-                cv.roundRect(x0, y, right - x0, h, h / 2, C.pill);
+                // what is searched: channels, movies or series
+                const modes = [['channels', 'Channels'], ['movies', 'Movies'], ['series', 'Series']], mw = 124;
+                let mx = right - modes.length * (mw + 8) + 8;
+                modes.forEach((md) => {
+                    const on = search.mode === md[0];
+                    cv.roundRect(mx, y, mw, h, h / 2, on ? C.accent : C.pill);
+                    cv.text(md[1], mx + mw / 2, y + h / 2 + 7, 19, C.text, Object.assign({ align: 'center' }, on ? B : M));
+                    btn(cv, 'smode_' + md[0], mx, y, mw, h, () => setSearchMode(md[0]), h / 2);
+                    mx += mw + 8;
+                });
+                const fw = right - modes.length * (mw + 8) - 8 - x0;
+                cv.roundRect(x0, y, fw, h, h / 2, C.pill);
                 icon(cv, 'search', x0 + 30, y + h / 2, C.text);
-                cv.text(search.text ? fit(cv, search.text, 24, right - x0 - 120, B) + (Math.floor(Date.now() / 500) % 2 ? '|' : '') : 'Type a channel name', x0 + 56, y + h / 2 + 9, 24, search.text ? C.text : '#7a7a82', search.text ? B : M);
+                const hint = { channels: 'Type a channel name', movies: 'Type a movie title', series: 'Type a series title' }[search.mode];
+                cv.text(search.text ? fit(cv, search.text, 24, fw - 120, B) + (Math.floor(Date.now() / 500) % 2 ? '|' : '') : hint, x0 + 56, y + h / 2 + 9, 24, search.text ? C.text : '#7a7a82', search.text ? B : M);
                 // the results, beside the keyboard
                 const kbW = Math.min(720, Math.round((right - x0) * 0.52)), rx = x0 + kbW + 20, rw = right - rx, ry = y + h + 18;
-                const res = search.results, list = res ? shownList(res.channels) : [];
-                if (search.busy) cv.text(cats.length ? 'Searching every channel (the first search takes about 15 s)...' : 'Searching...', rx, ry + 30, 18, C.grey, M);
+                const res = search.results, vodMode = search.mode !== 'channels';
+                const list = res ? (vodMode ? res.items : shownList(res.channels)) : [];
+                const what = { channels: 'channel', movies: 'movie', series: 'series' }[search.mode];
+                if (search.busy) cv.text(cats.length ? 'Searching every ' + what + ' (the first search takes a few seconds)...' : 'Searching...', rx, ry + 30, 18, C.grey, M);
                 else if (res && res.error) cv.text(fit(cv, res.error, 18, rw, M), rx, ry + 30, 18, C.red, M);
-                else if (res && !list.length) cv.text('No channel found.', rx, ry + 30, 18, C.grey, M);
+                else if (res && !list.length) cv.text('No ' + what + ' found.', rx, ry + 30, 18, C.grey, M);
                 else if (!res) cv.text('Results show here as you type.', rx, ry + 30, 18, C.grey, M);
+                if (vodMode) { drawVodResults(cv, A, list, rx, ry, rw); drawKeyboard(cv, A, kb, x0, ry, kbW); return; }
                 const rowH = PLATE.guide[1] + 10, vis = Math.floor((A.bottom - ry) / rowH);
                 const maxS = Math.max(0, (list.length - vis) * rowH);
                 scroll.results = Math.min(scroll.results, maxS);
@@ -827,7 +870,28 @@ mgu.run({
                     btn(cv, 'res_' + c.id, rx, yy, rw, PLATE.guide[1], () => play(c, list), 14);
                 });
                 cv.noclip();
-                // the keyboard
+                drawKeyboard(cv, A, kb, x0, ry, kbW);
+            }
+            /** a film's or a series' search results: poster, title, year; a tap opens its page */
+            function drawVodResults(cv, A, list, rx, ry, rw) {
+                const kind = search.mode, [pw, ph] = POSTER.result, rowH = ph + 12, vis = Math.floor((A.bottom - ry) / rowH);
+                const maxS = Math.max(0, (list.length - vis) * rowH);
+                scroll.results = Math.min(scroll.results, maxS);
+                regions.push({ key: 'results', x: rx, y: ry, w: rw, h: A.bottom - ry, max: maxS });
+                cv.clip(rx, ry, rw, A.bottom - ry);
+                const f0 = Math.floor(scroll.results / rowH);
+                list.slice(f0, f0 + vis + 2).forEach((it, i) => {
+                    const yy = ry + (f0 + i) * rowH - scroll.results;
+                    posterAt(cv, kind, it, rx, yy, POSTER.result);
+                    glass(cv, rx + pw + 10, yy, rw - pw - 10, ph, 14);
+                    cv.text(fit(cv, it.name, 20, rw - pw - 50, B), rx + pw + 30, yy + 40, 20, C.text, B);
+                    const sub = [it.year, it.rating ? Number(it.rating).toFixed(1) : null, it.hevc ? 'HEVC' : null].filter(Boolean).join('  ·  ');
+                    if (sub) cv.text(sub, rx + pw + 30, yy + 68, 16, C.grey, M);
+                    btn(cv, 'vres_' + it.id, rx, yy, rw, ph, () => openDetail(kind, it), 14);
+                });
+                cv.noclip();
+            }
+            function drawKeyboard(cv, A, kb, x0, ry, kbW) {
                 const rows = kb.rows(), ky = ry, kh = Math.min(64, Math.floor((A.bottom - ky - 3 * 8) / 4)), gap = 8;
                 rows.forEach((row, r) => {
                     const units = row.reduce((s, id) => s + (id === '#space' ? 4 : /^#/.test(id) ? 1.5 : 1), 0);

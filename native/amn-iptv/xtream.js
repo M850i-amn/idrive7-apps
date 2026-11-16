@@ -20,6 +20,7 @@
  *   await x.filmInfo(id)       { id, name, poster, plot, genre, year, rating, duration, ext, codec, hevc }
  *   await x.seriesCategories() [{ id, name }]
  *   await x.series(catId)      [{ id, name, poster, cat, rating, year }]
+ *   await x.allFilms() / x.allSeries()   every film / series of the account (search); large: kept by the client
  *   await x.seriesInfo(id)     { id, name, poster, plot, genre, year, seasons: [{ n, episodes: [{ id, n, title, ext, duration, plot, hevc }] }] }
  *   await x.file(kind, id, ext, range) -> { status, res, abort }: /movie|series/<user>/<password>/<id>.<ext>, with the
  *                              Range header the player's read asked for (a film is read where the demuxer seeks)
@@ -174,6 +175,17 @@ function createXtream(o) {
             cat: String(v.category_id || ''), rating: Number(v.rating) || null, year: yearOf(v.year || v.name), ext: extOf(v.container_extension),
             added: Number(v.added) || null, hevc: HEVC.test(String(v.name || '')) }));
     }
+    async function allFilms() {
+        const j = await call({ action: 'get_vod_streams' }, { timeoutMs: ALL_TIMEOUT, maxBytes: ALL_MAX });
+        return list(j).filter((v) => v && v.stream_id).map((v) => ({ id: Number(v.stream_id), name: cleanTitle(v.name), poster: img(v.stream_icon),
+            cat: String(v.category_id || ''), rating: Number(v.rating) || null, year: yearOf(v.year || v.name), ext: extOf(v.container_extension),
+            added: Number(v.added) || null, hevc: HEVC.test(String(v.name || '')) }));
+    }
+    async function allSeries() {
+        const j = await call({ action: 'get_series' }, { timeoutMs: ALL_TIMEOUT, maxBytes: ALL_MAX });
+        return list(j).filter((v) => v && v.series_id).map((v) => ({ id: Number(v.series_id), name: cleanTitle(v.name), poster: img(v.cover),
+            cat: String(v.category_id || ''), rating: Number(v.rating) || null, year: yearOf(v.releaseDate || v.release_date || v.name) }));
+    }
     async function filmInfo(id) {
         const j = await call({ action: 'get_vod_info', vod_id: String(id) });
         const i = (j && j.info) || {}, d = (j && j.movie_data) || {}, codec = String((i.video && i.video.codec_name) || '').toLowerCase();
@@ -217,7 +229,7 @@ function createXtream(o) {
     }
 
     return { signIn, use, info, categories, channels, allChannels, shortEpg, stream, logo, profiles: () => null, account: () => acc,
-        filmCategories, films, filmInfo, seriesCategories, series, seriesInfo, file };
+        filmCategories, films, filmInfo, seriesCategories, series, seriesInfo, file, allFilms, allSeries };
 }
 
 module.exports = { createXtream, candidates, hostOf, cleanTitle, HEVC, UA };
