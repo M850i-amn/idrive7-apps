@@ -391,7 +391,7 @@ bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
     mfxU16 n = (mfxU16)(dec_req.NumFrameSuggested + vpp_req[0].NumFrameSuggested);
     if (variant == 1) n = (mfxU16)(dec_req.NumFrameMin + vpp_req[0].NumFrameMin);
     else if (variant >= 2) n = (mfxU16)(dec_req.NumFrameMin + 1);
-    const std::string pool = " (" + std::to_string(n) + " surfaces " + std::to_string(in.Width) + "x" + std::to_string(in.Height) +
+    const std::string poolDesc = " (" + std::to_string(n) + " surfaces " + std::to_string(in.Width) + "x" + std::to_string(in.Height) +
                              ", decoder min " + std::to_string(dec_req.NumFrameMin) + " / suggested " + std::to_string(dec_req.NumFrameSuggested) + ")";
 
     /* Opaque surfaces: the application passes surface headers only, and MSDK
@@ -421,11 +421,11 @@ bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
 
     sts = MFXVideoDECODE_Init(session, &dec);
     if (sts < MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoDECODE_Init", sts) + pool);
+        return fail(mfx_error("MFXVideoDECODE_Init", sts) + poolDesc);
     sts = MFXVideoVPP_Init(session, &vpp);
     if (sts < MFX_ERR_NONE) {
         MFXVideoDECODE_Close(session);
-        return fail(mfx_error("MFXVideoVPP_Init", sts) + pool);
+        return fail(mfx_error("MFXVideoVPP_Init", sts) + poolDesc);
     }
 
     /* One output surface suffices: each VPP run is synchronised before the
