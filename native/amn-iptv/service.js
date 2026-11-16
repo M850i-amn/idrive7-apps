@@ -53,7 +53,7 @@ const nftm = require('./nft');
 const pagem = require('./page');
 const { createPlayer } = require('./player');
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const PAGE_PORT = 8493;   // aurelm: Emby 8490, TVH (bmw-test-apps) 8491, TVH Player 8492: all may be open at once
 const PAGE_MINUTES = 10;
 const IDLE_MS = 10 * 60 * 1000;

@@ -43,7 +43,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -965,9 +965,11 @@ mgu.run({
                 // why there is no sound, or no picture, said over the picture
                 const snd = soundProblem(pb) || pictureProblem(pb);
                 if (snd && !msg) {
-                    const sw = cv.textWidth(fit(cv, snd, 19, W - 400, M), 19, M) + 52;
-                    cv.roundRect((W - sw) / 2, A.y + 6, sw, 42, 21, A_('#000000', 0.7));
-                    cv.text(fit(cv, snd, 19, W - 400, M), W / 2, A.y + 34, 19, C.amber, Object.assign({ align: 'center' }, M));
+                    // 0.3.3: up to three lines (the decoder's own error is long: it names each 10-bit try)
+                    const rows = wrapText(cv, snd, 19, W - 400, M, 3);
+                    const sw = Math.max.apply(null, rows.map((r) => cv.textWidth(r, 19, M))) + 52, sh = 18 + rows.length * 26;
+                    cv.roundRect((W - sw) / 2, A.y + 6, sw, sh, Math.min(21, sh / 2), A_('#000000', 0.7));
+                    rows.forEach((r, k) => cv.text(r, W / 2, A.y + 34 + k * 26, 19, C.amber, Object.assign({ align: 'center' }, M)));
                 }
                 // a tap anywhere else shows the controls (or hides them): drawn last, since the kit gives a tap to the
                 // first target under the finger and this one, drawn first, took every tap (the back arrow, the actions)
@@ -1032,8 +1034,8 @@ mgu.run({
             function pictureProblem(pb) {
                 if (!pb || pb.kind !== 'film' || pb.state !== 'playing') { blindSince = 0; return null; }
                 const v = pb.video || {}, what = (v.codec || '?').toUpperCase() + ' ' + (v.w || '?') + 'x' + (v.h || '?');
+                if (pb.shown > 0) { blindSince = 0; return null; }      // 0.3.3: a picture showing outranks an earlier start error
                 if (pb.videoError) return 'No picture (' + what + '): ' + pb.videoError;
-                if (pb.shown > 0) { blindSince = 0; return null; }
                 if (!blindSince) blindSince = Date.now();
                 return Date.now() - blindSince > 8000 ? 'No picture (' + what + '): nothing decoded, ' + (pb.decerr || 0) + ' decode errors' : null;
             }
