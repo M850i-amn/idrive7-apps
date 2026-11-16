@@ -16,7 +16,8 @@
  *             Favourite / Stop over it for 6 s
  *   signin    the QR code of the service's sign-in page (on the car Wi-Fi): the login goes from the phone to the
  *             head unit, never through this app
- *   soon      Series and Movies (a later version)
+ *   movies, series  the account's films and series: posters by category, a detail page (play, resume, start over;
+ *             a series' seasons and episodes); they play on the same player screen, with a film's own bar
  *
  * The picture shows while parked (lib/parkgate.js: under 1 km/h and in P); the setting "Video while driving" lets a
  * passenger watch. The sound plays either way. Favourites are kept in the app's data folder (favourites.json).
@@ -41,7 +42,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.10';
+const VERSION = '0.2.0';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -50,6 +51,11 @@ const C = {
 };
 const PLATE = { card: [236, 112], guide: [150, 70], player: [190, 104] };
 const LOGO_SLOTS = 72, LOGO_ID0 = 200;
+const POSTER = { grid: [120, 180], detail: [200, 300], player: [72, 108] };
+/** 1:02:03 or 42:05 */
+const hms = (t) => { t = Math.max(0, Math.floor(t || 0)); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, x = t % 60; return (h ? h + ':' + ('0' + m).slice(-2) : m) + ':' + ('0' + x).slice(-2); };
+/** 1 h 42 min, or 42 min */
+const dur = (t) => { const m = Math.round((t || 0) / 60); return m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min'; };
 const PLAYING = ['loading', 'playing', 'buffering'];
 
 const A_ = (c, a) => { const s = String(c).replace('#', '').slice(0, 6); return '#' + s + ('0' + Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16)).slice(-2); };
@@ -62,7 +68,7 @@ const hhmm = (t) => { const d = new Date(t * 1000); return ('0' + d.getHours()).
 /** a channel's name without the panel's country prefix ("CAF  TVA GATINEAU" -> "TVA GATINEAU") */
 const short = (n) => String(n || '').replace(/^\s*[A-Z]{2,4}\s*[|:-]?\s+(?=\S)/, '').replace(/\s+/g, ' ').trim();
 /** a category's name as shown ("CA  QUEBEC" -> "CA · QUEBEC") */
-const catName = (n) => String(n || '').replace(/^\s*([A-Z]{2,4})\s+/, '$1 · ').replace(/\s+/g, ' ').trim();
+const catName = (n) => String(n || '').replace(/^\s*([A-Z]{2,4})\s*[|:\-]?\s+/, '$1 · ').replace(/\s+/g, ' ').trim();
 
 mgu.run({
     async start(ctx) {
@@ -97,7 +103,14 @@ mgu.run({
             const wantNow = new Set();
             let page = 'home', toast = null, overlayUntil = 0, panel = null, guideFor = null;
             let playingCh = null, zapList = [];
-            const scroll = { cats: 0, chans: 0, favs: 0, results: 0, guide: 0 };
+            const scroll = { cats: 0, chans: 0, favs: 0, results: 0, guide: 0, vcats: 0, vgrid: 0, eps: 0 };
+            // films and series (declared here: the first status poll already reads them)
+            let detail = null, playingFilm = null;
+            const isFilm = () => !!(st && st.playback && st.playback.kind === 'film');
+            // where each film and episode stopped (resume), kept on the head unit with the app's data
+            const RESUME_FILE = path.join(ctx.dataDir, 'resume.json');
+            let resume = {}, resumeSaved = 0;
+            try { resume = JSON.parse(fs.readFileSync(RESUME_FILE, 'utf8')) || {}; } catch (e) { /* none yet */ }
             const say = (text, ms) => { toast = { text, until: Date.now() + (ms || 3000) }; };
             const settingsGet = (k) => settings.get(k);
 
@@ -122,6 +135,7 @@ mgu.run({
                 polling = true;
                 try {
                     st = await svc.ask({ cmd: 'status' });
+                    trackResume();
                     svcErr = null; svcErrCode = null;
                     if (signedIn() && st.client && st.client.state === 'connected' && (!cats.length || (st.categories && st.categories.at !== catsAt))) {
                         const r = await svc.ask({ cmd: 'categories' });
@@ -200,7 +214,7 @@ mgu.run({
                     if (!q.c.icon) { logos[q.key] = { none: true }; continue; }
                     logoBusy++;
                     svc.ask({ cmd: 'logo', id: q.c.id, icon: q.c.icon }, 30000).then((r) => {
-                        const pic = r && r.img ? LOGO.make(Buffer.from(r.img, 'base64'), q.size[0], q.size[1]) : null;
+                        const pic = r && r.img ? (q.c.cover ? LOGO.poster : LOGO.make)(Buffer.from(r.img, 'base64'), q.size[0], q.size[1]) : null;
                         if (!pic) { logos[q.key] = { none: true }; return; }
                         // a slot: a free one, or the least recently drawn
                         let slot = slotUse.length < LOGO_SLOTS ? slotUse.length : -1;
@@ -223,12 +237,20 @@ mgu.run({
             function play(c, list) {
                 if (!c) return;
                 playingCh = { id: c.id, name: c.name, icon: c.icon || '', cat: c.cat || '' };
+                playingFilm = null;
                 if (list) zapList = list;
                 page = 'player'; panel = null; overlayUntil = Date.now() + 6000;
                 svc.ask({ cmd: 'play', id: c.id, name: c.name }).then(poll, (e) => say(e.message));
             }
-            function stopPlay() { svc.ask({ cmd: 'stop' }).then(poll, () => {}); playingCh = null; if (page === 'player') page = 'home'; }
+            function stopPlay() {
+                trackResume(); saveResume(true);
+                svc.ask({ cmd: 'stop' }).then(poll, () => {});
+                const wasFilm = !!playingFilm;
+                playingCh = null; playingFilm = null;
+                if (page === 'player') page = wasFilm && detail ? 'detail' : 'home';
+            }
             function zap(dir) {
+                if (isFilm()) { skip(dir * 30); return; }   // a film: the steering wheel's skip moves 30 s
                 if (!playingCh || !zapList.length) return;
                 const i = zapList.findIndex((c) => c.id === playingCh.id);
                 const n = zapList[((i < 0 ? 0 : i) + dir + zapList.length) % zapList.length];
@@ -295,7 +317,7 @@ mgu.run({
                 : FS.button(cv, key, x, y, w, h, guard(key, tap(fn)), { r: r != null ? r : 16, slop: 4 });
 
             /* ---------- the player over the whole screen (lib/fullview.js) ---------- */
-            const fv = createFullView({ RenderClient, Recorder: record.Recorder, appId: 'amn_iptv', log, W,
+            const fv = createFullView({ RenderClient, Recorder: record.Recorder, appId: 'amn_iptv', log, W, off: 'MGU_EMU_CLOSED' in process.env,
                 onTouch: onDrag, onCcu: () => { overlayUntil = Date.now() + 6000; } });
             // the player page, the app's page shown and in front (not under Settings, not left with HOME)
             // full screen or the app's page: the player's toggle (its top bar), kept across runs
@@ -351,6 +373,239 @@ mgu.run({
                 cv.fillRect(x, y, w, 4, '#46464c');
                 cv.fillRect(x, y, Math.round(w * f), 4, C.text);
             }
+            /* ---------- films and series (the service's film.js plays them) ---------- */
+            const vod = { movies: { cats: null, sel: null, lists: {}, err: null, errAt: 0, busy: false },
+                series: { cats: null, sel: null, lists: {}, err: null, errAt: 0, busy: false } };
+            function saveResume(force) {
+                if (!force && Date.now() - resumeSaved < 10000) return;
+                resumeSaved = Date.now();
+                const keep = {};
+                Object.keys(resume).sort((a, b) => resume[b].at - resume[a].at).slice(0, 200).forEach((k) => { keep[k] = resume[k]; });
+                resume = keep;
+                try { fs.writeFileSync(RESUME_FILE, JSON.stringify(resume)); } catch (e) { log.warn('resume: ' + e.message); }
+            }
+            function trackResume() {
+                const pb = st && st.playback;
+                if (!playingFilm || !pb || pb.kind !== 'film') return;
+                const d = pb.duration || playingFilm.duration || 0;
+                if (pb.state === 'ended' || (d && pb.pos > d - 60)) { if (resume[playingFilm.key]) { delete resume[playingFilm.key]; saveResume(true); } return; }
+                if (pb.pos > 30 && (pb.state === 'playing' || pb.state === 'paused')) {
+                    resume[playingFilm.key] = { pos: Math.floor(pb.pos), dur: Math.floor(d), at: Date.now() };
+                    saveResume(pb.state === 'paused');
+                }
+            }
+            const VC = { movies: ['film-cats', 'films'], series: ['series-cats', 'series'] };
+            function loadVodCats(kind) {
+                const v = vod[kind];
+                if (v.cats || v.busy || (v.err && Date.now() - v.errAt < 15000)) return;
+                v.busy = true;
+                svc.ask({ cmd: VC[kind][0] }, 70000).then((r) => {
+                    if (r.error && !(r.categories || []).length) { v.err = r.error; v.errAt = Date.now(); return; }
+                    v.cats = r.categories || []; v.err = null;
+                    if (v.sel === null && v.cats.length) v.sel = v.cats[0].id;
+                }, (e) => { v.err = e.message; v.errAt = Date.now(); }).then(() => { v.busy = false; });
+            }
+            function loadVodList(kind, cat) {
+                const v = vod[kind];
+                if (cat == null) return null;
+                const L = v.lists[cat];
+                if (L && (L.loading || (!L.error && Date.now() - L.at < 600000) || (L.error && Date.now() - L.at < 15000))) return L;
+                v.lists[cat] = { loading: true, at: Date.now(), items: L ? L.items : [] };
+                svc.ask({ cmd: VC[kind][1], cat }, 130000).then((r) => { v.lists[cat] = { at: Date.now(), items: r[VC[kind][1]] || [], error: r.error || null }; },
+                    (e) => { v.lists[cat] = { at: Date.now(), items: [], error: e.message }; });
+                return v.lists[cat];
+            }
+            function openDetail(kind, item) {
+                const d = detail = { kind, item, info: null, error: null, season: null };
+                page = 'detail'; scroll.eps = 0;
+                svc.ask({ cmd: kind === 'movies' ? 'film-info' : 'series-info', id: item.id }, 35000).then((r) => {
+                    if (detail !== d) return;
+                    if (r.error) d.error = r.error;
+                    else { d.info = r.info; if (kind === 'series' && r.info.seasons && r.info.seasons.length) d.season = r.info.seasons[0].n; }
+                }, (e) => { if (detail === d) d.error = e.message; });
+            }
+            function playFilm(f, start) {
+                playingFilm = f; playingCh = null; panel = null;
+                page = 'player'; overlayUntil = Date.now() + 6000;
+                svc.ask({ cmd: 'film-play', kind: f.kind, id: f.id, ext: f.ext, name: f.name, start: Math.floor(start || 0), duration: f.duration || 0 }).then(poll, (e) => say(e.message));
+            }
+            function filmCmd(cmd, extra) { svc.ask(Object.assign({ cmd }, extra || {})).then(poll, (e) => say(e.message)); }
+            function skip(dt) {
+                const pb = st && st.playback;
+                if (!isFilm() || !pb) return;
+                const d = pb.duration || 0;
+                let t = (pb.pos || 0) + dt;
+                if (d) t = Math.min(t, d - 5);
+                filmCmd('film-seek', { pos: Math.max(0, Math.floor(t)) });
+            }
+            function posterAt(cv, kind, it, x, y, size) {
+                const lg = it.poster ? logoOf({ id: (kind === 'series' ? 's' : 'f') + it.id, icon: it.poster, cover: true }, size) : null;
+                if (lg) { cv.image(lg.id, x, y, size[0], size[1]); return; }
+                cv.roundRect(x, y, size[0], size[1], 10, '#2c2c30');
+                cv.text(fit(cv, short(it.name || ''), 15, size[0] - 16, B), x + size[0] / 2, y + size[1] / 2 + 6, 15, C.grey, Object.assign({ align: 'center' }, B));
+            }
+            /** text cut into lines that fit w, at most n (the last one ends with ...) */
+            function wrapText(cv, text, size, w, o, n) {
+                const words = String(text || '').replace(/\s+/g, ' ').trim().split(' '), out = [];
+                let line = '';
+                for (let i = 0; i < words.length && out.length < n; i++) {
+                    const t = line ? line + ' ' + words[i] : words[i];
+                    if (cv.textWidth(t, size, o) <= w || !line) { line = t; continue; }
+                    out.push(line); line = words[i];
+                }
+                if (line && out.length < n) out.push(line);
+                else if (line && out.length) out[n - 1] = fit(cv, out[n - 1] + ' ' + line, size, w, o);
+                return out.filter(Boolean);
+            }
+            function drawVod(cv, A, x0, kind) {
+                const v = vod[kind];
+                loadVodCats(kind);
+                const colW = 300, rowH = 46, top = A.y + 64;
+                cv.text(kind === 'movies' ? 'Movies' : 'Series', x0 + 8, A.y + 38, 32, C.text, B);
+                glass(cv, x0, top, colW, A.bottom - top, 18, C.rail);
+                const cl = v.cats || [], visRows = Math.floor((A.bottom - top - 16) / rowH), maxC = Math.max(0, (cl.length - visRows) * rowH);
+                scroll.vcats = Math.min(scroll.vcats, maxC);
+                regions.push({ key: 'vcats', x: x0, y: top, w: colW, h: A.bottom - top, max: maxC });
+                cv.clip(x0, top + 6, colW, A.bottom - top - 12);
+                if (!cl.length) cv.text(fit(cv, v.err ? 'Could not load: ' + v.err : 'Loading...', 17, colW - 40, M), x0 + 20, top + 40, 17, v.err ? C.red : C.grey, M);
+                const first = Math.floor(scroll.vcats / rowH);
+                cl.slice(first, first + visRows + 2).forEach((c, i) => {
+                    const y = top + 8 + (first + i) * rowH - scroll.vcats, on = c.id === v.sel;
+                    if (on) cv.roundRect(x0 + 8, y, colW - 16, rowH - 6, 12, C.accentDim);
+                    cv.text(fit(cv, catName(c.name), 18, colW - 44, on ? B : M), x0 + 22, y + 28, 18, on ? C.accent : '#e8e8ec', on ? B : M);
+                    btn(cv, 'vcat_' + c.id, x0 + 8, y, colW - 16, rowH - 6, () => { v.sel = c.id; scroll.vgrid = 0; }, 12);
+                });
+                cv.noclip();
+                // the category's posters
+                const gx = x0 + colW + 18, gw = A.right - gx, pw = POSTER.grid[0], ph = POSTER.grid[1];
+                const L = loadVodList(kind, v.sel), items = L ? L.items : [];
+                const cw = pw + 18, chH = ph + 58, cols = Math.max(1, Math.floor((gw + 18) / cw));
+                const rowsV = Math.ceil((A.bottom - top) / chH) + 1, maxS = Math.max(0, Math.ceil(items.length / cols) * chH - (A.bottom - top));
+                scroll.vgrid = Math.min(scroll.vgrid, maxS);
+                regions.push({ key: 'vgrid', x: gx, y: top, w: gw, h: A.bottom - top, max: maxS });
+                if (v.sel != null && (!L || (L.loading && !items.length))) cv.text('Loading...', gx, top + 40, 20, C.grey, M);
+                else if (L && L.error && !items.length) cv.text(fit(cv, 'Could not load this category: ' + L.error, 18, gw, M), gx, top + 40, 18, C.red, M);
+                else if (L && !items.length) cv.text('Nothing in this category.', gx, top + 40, 18, C.grey, M);
+                cv.clip(gx, top, gw, A.bottom - top);
+                const r0 = Math.floor(scroll.vgrid / chH);
+                for (let r = r0; r < r0 + rowsV; r++) {
+                    for (let k = 0; k < cols; k++) {
+                        const it = items[r * cols + k];
+                        if (!it) continue;
+                        const x = gx + k * cw, y = top + r * chH - scroll.vgrid;
+                        posterAt(cv, kind, it, x, y, POSTER.grid);
+                        const rk = kind === 'movies' && resume['movie:' + it.id];
+                        if (rk && rk.dur) { cv.fillRect(x, y + ph - 6, pw, 6, A_('#000000', 0.6)); cv.fillRect(x, y + ph - 6, Math.max(4, Math.round(pw * Math.min(1, rk.pos / rk.dur))), 6, C.accent); }
+                        cv.text(fit(cv, it.name, 16, pw, B), x, y + ph + 24, 16, C.text, B);
+                        const sub = [it.year, it.rating ? Number(it.rating).toFixed(1) : null, it.hevc ? 'HEVC' : null].filter(Boolean).join('  ·  ');
+                        if (sub) cv.text(fit(cv, sub, 14, pw, M), x, y + ph + 44, 14, C.grey, M);
+                        btn(cv, 'vod_' + it.id, x, y, pw, ph + 48, () => openDetail(kind, it), 10);
+                    }
+                }
+                cv.noclip();
+            }
+            function drawDetail(cv, A, x0) {
+                const d = detail;
+                if (!d) { page = 'home'; return; }
+                const it = d.item, info = d.info || {}, pw = POSTER.detail[0];
+                cv.roundRect(x0, A.y, 56, 56, 28, A_('#ffffff', 0.12));
+                cv.line(x0 + 33, A.y + 16, x0 + 21, A.y + 28, 3.5, C.text); cv.line(x0 + 21, A.y + 28, x0 + 33, A.y + 40, 3.5, C.text);
+                btn(cv, 'd_back', x0, A.y, 56, 56, () => { page = d.kind; detail = null; }, 28);
+                const py = A.y + 72;
+                posterAt(cv, d.kind, { id: it.id, poster: it.poster || info.poster, name: it.name }, x0, py, POSTER.detail);
+                const tx = x0 + pw + 36, tw = A.right - tx;
+                cv.text(fit(cv, info.name || it.name, 34, tw, B), tx, A.y + 40, 34, C.text, B);
+                const rating = info.rating || it.rating;
+                const facts = [info.year || it.year, info.genre, info.duration ? dur(info.duration) : null, rating ? 'Rating ' + Number(rating).toFixed(1) : null].filter(Boolean).join('   ·   ');
+                if (facts) cv.text(fit(cv, facts, 18, tw, M), tx, py + 20, 18, C.grey, M);
+                if (d.error) { cv.text(fit(cv, 'Could not load the details: ' + d.error, 18, tw, M), tx, py + 62, 18, C.red, M); return; }
+                if (!d.info) { cv.text('Loading...', tx, py + 62, 18, C.grey, M); return; }
+                const lines = wrapText(cv, info.plot || '', 19, tw, M, d.kind === 'movies' ? 6 : 3);
+                lines.forEach((l, i) => cv.text(l, tx, py + 60 + i * 28, 19, '#dcdce0', M));
+                const by = py + 60 + lines.length * 28 + 10;
+                if (d.kind === 'movies') {
+                    drawPlayRow(cv, { kind: 'movie', id: it.id, ext: info.ext || it.ext, name: info.name || it.name, duration: info.duration || null,
+                        key: 'movie:' + it.id, poster: it.poster || info.poster }, info.hevc || it.hevc, tx, by);
+                } else drawEpisodes(cv, A, d, tx, by);
+            }
+            function drawPlayRow(cv, f, hevc, x, y) {
+                if (hevc) { cv.text('This one is in HEVC (H.265): the head unit cannot play it yet.', x, y + 30, 19, C.amber, M); return; }
+                const r = resume[f.key];
+                const list = r && r.pos > 30 ? [['Resume from ' + hms(r.pos), () => playFilm(f, r.pos), true], ['Start over', () => playFilm(f, 0), false]]
+                    : [['Play', () => playFilm(f, 0), true]];
+                let bx = x;
+                list.forEach((b, i) => {
+                    const w = cv.textWidth(b[0], 20, B) + 72;
+                    cv.roundRect(bx, y, w, 56, 28, b[2] ? C.accent : A_('#ffffff', 0.16));
+                    cv.text(b[0], bx + w / 2, y + 36, 20, C.text, Object.assign({ align: 'center' }, B));
+                    btn(cv, 'playrow_' + i, bx, y, w, 56, b[1], 28);
+                    bx += w + 16;
+                });
+            }
+            function drawEpisodes(cv, A, d, x, y) {
+                const seasons = d.info.seasons || [];
+                if (!seasons.length) { cv.text('No episodes.', x, y + 24, 18, C.grey, M); return; }
+                let sx = x;
+                seasons.forEach((s) => {
+                    const label = 'Season ' + s.n, w = cv.textWidth(label, 17, B) + 36, on = s.n === d.season;
+                    if (sx + w > A.right) return;
+                    cv.roundRect(sx, y, w, 40, 20, on ? C.accent : A_('#ffffff', 0.12));
+                    cv.text(label, sx + w / 2, y + 27, 17, C.text, Object.assign({ align: 'center' }, B));
+                    btn(cv, 'season_' + s.n, sx, y, w, 40, () => { d.season = s.n; scroll.eps = 0; }, 20);
+                    sx += w + 10;
+                });
+                const season = seasons.filter((s) => s.n === d.season)[0] || seasons[0];
+                const ly = y + 54, lh = A.bottom - ly, rowH = 66, w = A.right - x;
+                const maxS = Math.max(0, season.episodes.length * rowH - lh);
+                scroll.eps = Math.min(scroll.eps, maxS);
+                regions.push({ key: 'eps', x, y: ly, w, h: lh, max: maxS });
+                cv.clip(x, ly, w, lh);
+                const f0 = Math.floor(scroll.eps / rowH), sname = d.info.name || d.item.name;
+                season.episodes.slice(f0, f0 + Math.ceil(lh / rowH) + 1).forEach((e, i) => {
+                    const yy = ly + (f0 + i) * rowH - scroll.eps, key = 'episode:' + e.id, r = resume[key], n = e.n != null ? e.n : f0 + i + 1;
+                    cv.roundRect(x, yy, w, rowH - 8, 14, A_('#ffffff', 0.06));
+                    cv.text(String(n), x + 34, yy + 36, 20, C.accent, Object.assign({ align: 'center' }, B));
+                    cv.text(fit(cv, e.title || 'Episode ' + n, 19, w - 120, B), x + 70, yy + 26, 19, C.text, B);
+                    const sub = [e.duration ? dur(e.duration) : null, e.hevc ? 'HEVC (H.265): cannot play yet' : null, r && r.pos > 30 ? 'stopped at ' + hms(r.pos) : null].filter(Boolean).join('   ·   ');
+                    if (sub) cv.text(fit(cv, sub, 15, w - 120, M), x + 70, yy + 48, 15, e.hevc ? C.amber : C.grey, M);
+                    if (!e.hevc) {
+                        const f = { kind: 'series', id: e.id, ext: e.ext, name: sname + '  S' + season.n + ' E' + n, duration: e.duration || null, key, series: d.item.id, poster: d.item.poster };
+                        btn(cv, 'ep_' + e.id, x, yy, w, rowH - 8, () => playFilm(f, r && r.pos > 30 ? r.pos : 0), 14);
+                    }
+                });
+                cv.noclip();
+            }
+            /** a film's bar on the player: its title, the progress bar (a tap jumps there), the time, the buttons */
+            function drawFilmBar(cv, A, fullH, film, pb) {
+                const by = fullH - 200;
+                cv.gradientRect(0, by - 60, W, fullH - by + 60, [[0, A_('#000000', 0)], [0.45, A_('#000000', 0.7)], [1, A_('#000000', 0.88)]]);
+                let tx = A.x;
+                if (film.poster) {
+                    posterAt(cv, film.kind === 'series' ? 'series' : 'movies', { id: film.kind === 'series' ? film.series : film.id, poster: film.poster, name: film.name }, A.x, by - 4, POSTER.player);
+                    tx = A.x + POSTER.player[0] + 22;
+                }
+                cv.text(fit(cv, film.name, 30, A.right - tx, B), tx, by + 28, 30, C.text, B);
+                const d = pb.duration || film.duration || 0, pos = pb.pos || 0, bw = A.right - tx, barY = by + 56;
+                cv.roundRect(tx, barY, bw, 8, 4, A_('#ffffff', 0.3));
+                if (d) {
+                    cv.roundRect(tx, barY, Math.max(8, Math.round(bw * Math.min(1, pos / d))), 8, 4, C.accent);
+                    for (let i = 0; i < 20; i++) btn(cv, 'seek_' + i, tx + i * bw / 20, barY - 16, bw / 20, 40, () => filmCmd('film-seek', { pos: Math.floor(d * (i + 0.5) / 20) }), 0);
+                    cv.text('-' + hms(Math.max(0, d - pos)), A.right, barY + 32, 17, '#c8c8cc', Object.assign({ align: 'right' }, M));
+                }
+                cv.text(hms(pos), tx, barY + 32, 17, '#c8c8cc', M);
+                const held = pb.state === 'paused' || pb.state === 'ended' || pb.state === 'error';
+                const acts = [['-30', () => skip(-30)], ['-10', () => skip(-10)], [held ? 'Play' : 'Pause', () => filmCmd(held ? 'film-resume' : 'film-pause')],
+                    ['+10', () => skip(10)], ['+30', () => skip(30)], ['Stop', () => stopPlay()]];
+                const w = 116, gap = 14;
+                let ax = tx;
+                acts.forEach((a) => {
+                    const main = a[0] === 'Play' || a[0] === 'Pause';
+                    cv.roundRect(ax, by + 112, w, 50, 25, main ? C.accent : A_('#ffffff', 0.2));
+                    cv.text(a[0], ax + w / 2, by + 144, 19, C.text, Object.assign({ align: 'center' }, B));
+                    btn(cv, 'fact_' + a[0], ax, by + 112, w, 50, () => { a[1](); overlayUntil = Date.now() + 6000; }, 25);
+                    ax += w + gap;
+                });
+            }
             function rail(cv, A) {
                 const x = A.x, w = 108;
                 cv.roundRect(x, A.y, w, A.h, 28, C.rail);
@@ -358,7 +613,7 @@ mgu.run({
                 const step = Math.min(96, (A.h - 40) / items.length);
                 items.forEach((it, i) => {
                     const cy = A.y + 24 + i * step + step / 2;
-                    const on = page === it[0] || (it[0] === 'live' && page === 'player' && false) || (page === 'soon' && soonWhat === it[0]);
+                    const on = page === it[0] || (page === 'detail' && detail && detail.kind === it[0]);
                     if (on) cv.roundRect(x + 8, cy - step / 2 + 6, w - 16, step - 12, 20, C.accentDim);
                     const col = on ? C.accent : '#e8e8ec';
                     icon(cv, it[0], x + w / 2, cy - 12, col);
@@ -369,7 +624,7 @@ mgu.run({
             let soonWhat = '';
             function go(p) {
                 panel = null;
-                if (p === 'series' || p === 'movies') { soonWhat = p; page = 'soon'; return; }
+                if (p === 'series' || p === 'movies') loadVodCats(p);
                 page = p;
                 if (p === 'search') { search.kb = search.kb || new KB.Keyboard('abc'); }
             }
@@ -400,12 +655,12 @@ mgu.run({
                 icon(cv, 'search', sx + 30, y + h / 2, C.grey);
                 cv.text('Search channels', sx + 56, y + h / 2 + 8, 22, '#7a7a82', M);
                 btn(cv, 'top_search', sx, y, sw, h, () => go('search'), h / 2);
-                if (playing() && playingCh && page !== 'player') {
+                if (playing() && (playingCh || playingFilm) && page !== 'player') {
                     const bx = sx + sw + 18, bw = A.right - bx;
                     if (bw > 220) {
                         cv.roundRect(bx, y, bw, h, h / 2, C.accentDim);
                         cv.circle(bx + 24, y + h / 2, 6, C.accent);
-                        cv.text(fit(cv, 'Now playing  ' + short(playingCh.name), 20, bw - 150, B), bx + 40, y + h / 2 + 7, 20, C.text, B);
+                        cv.text(fit(cv, 'Now playing  ' + short((playingCh || playingFilm).name), 20, bw - 150, B), bx + 40, y + h / 2 + 7, 20, C.text, B);
                         cv.text('Watch', bx + bw - 24, y + h / 2 + 7, 20, C.accent, Object.assign({ align: 'right' }, B));
                         btn(cv, 'top_watch', bx, y, bw, h, () => { page = 'player'; overlayUntil = Date.now() + 6000; }, h / 2);
                     }
@@ -593,16 +848,19 @@ mgu.run({
             }
             function drawPlayer(cv, A, fullH) {
                 cv.fillRect(0, 0, W, fullH, '#000000');
-                const pb = (st && st.playback) || {}, ch = playingCh;
+                const pb = (st && st.playback) || {};
+                const film = pb.kind === 'film' ? (playingFilm || { kind: 'movie', name: (pb.film && pb.film.name) || 'Film' }) : null;
+                const ch = film ? null : playingCh, subject = film || ch;
                 const pic = videoReady() && typeof cv.video === 'function';
                 const allowed = pictureAllowed();
-                if (ch && pic && allowed && pb.state !== 'idle') cv.video(VID, 0, 0, W, fullH);
+                if (subject && pic && allowed && pb.state !== 'idle') cv.video(VID, 0, 0, W, fullH);
                 // what the picture cannot say: loading, an error, the park rule
                 const mid = fullH / 2;
                 let msg = null, sub = null;
-                if (!ch || pb.state === 'idle') { msg = 'Nothing playing'; sub = 'Choose a channel on Home, Live TV or Search.'; }
-                else if (pb.state === 'error') { msg = 'This channel did not play'; sub = pb.error || ''; }
-                else if (pb.state === 'loading') { msg = 'Tuning ' + short(ch.name) + '...'; sub = pb.error ? 'Reconnecting: ' + pb.error : ''; }
+                if (!subject || pb.state === 'idle') { msg = 'Nothing playing'; sub = 'Choose a channel, a film or a series.'; }
+                else if (pb.state === 'error') { msg = film ? 'This one did not play' : 'This channel did not play'; sub = pb.error || ''; }
+                else if (pb.state === 'loading') { msg = (film ? 'Starting ' : 'Tuning ') + short(subject.name) + '...'; sub = pb.error ? 'Reconnecting: ' + pb.error : ''; }
+                else if (pb.state === 'ended') { msg = 'The end'; sub = 'Play starts it again; the arrow goes back.'; }
                 else if (!allowed) { msg = 'The picture shows while parked'; sub = 'The sound goes on. A passenger can watch while driving: Settings, Video while driving.'; }
                 else if (!pic && gpuVideo()) { msg = 'Starting the picture...'; sub = ''; }
                 else if (!pic) { msg = 'Waiting for the GPU renderer'; sub = 'Install a renderer from the Store (mgu-render), then restart the head unit.'; }
@@ -621,16 +879,19 @@ mgu.run({
                 // a tap anywhere else shows the controls (or hides them): drawn last, since the kit gives a tap to the
                 // first target under the finger and this one, drawn first, took every tap (the back arrow, the actions)
                 const picBtn = () => btn(cv, 'pic', 0, A.y, W, fullH - A.y, () => { if (Date.now() < overlayUntil && !panel) overlayUntil = 0; else overlayUntil = Date.now() + 6000; panel = null; }, 0);
-                if (!show || !ch) { picBtn(); return; }
+                if (!show || !subject) { picBtn(); return; }
                 // the top: back, LIVE
                 cv.gradientRect(0, 0, W, 140, [[0, A_('#000000', 0.6)], [1, A_('#000000', 0)]]);
                 cv.roundRect(A.x, A.y, 56, 56, 28, A_('#ffffff', 0.18));
                 cv.line(A.x + 33, A.y + 16, A.x + 21, A.y + 28, 3.5, C.text); cv.line(A.x + 21, A.y + 28, A.x + 33, A.y + 40, 3.5, C.text);
-                btn(cv, 'p_back', A.x, A.y, 56, 56, () => { page = 'home'; panel = null; }, 28);
-                cv.roundRect(A.right - 96, A.y + 6, 92, 42, 21, C.accent);
-                cv.text('LIVE', A.right - 50, A.y + 35, 20, C.text, Object.assign({ align: 'center' }, B));
+                btn(cv, 'p_back', A.x, A.y, 56, 56, () => { page = film && detail ? 'detail' : 'home'; panel = null; }, 28);
+                // LIVE, or a film's time
+                const tag = film ? hms(pb.pos || 0) + (pb.duration ? ' / ' + hms(pb.duration) : '') : 'LIVE';
+                const tw = film ? cv.textWidth(tag, 20, B) + 40 : 92;
+                cv.roundRect(A.right - tw - 4, A.y + 6, tw, 42, 21, film ? A_('#ffffff', 0.18) : C.accent);
+                cv.text(tag, A.right - 4 - tw / 2, A.y + 35, 20, C.text, Object.assign({ align: 'center' }, B));
                 // full screen <-> the app's page: four corner marks, pointing out (go full) or in (leave it)
-                const fx = A.right - 96 - 16 - 56, fy = A.y;
+                const fx = A.right - tw - 4 - 16 - 56, fy = A.y;
                 cv.roundRect(fx, fy, 56, 56, 28, A_('#ffffff', 0.18));
                 const inward = fullOn, c0 = 17, c1 = 9;
                 [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach((d) => {
@@ -639,6 +900,7 @@ mgu.run({
                     cv.line(cx, cy, cx, cy + d[1] * 7 * k, 3, C.text);
                 });
                 btn(cv, 'p_full', fx, fy, 56, 56, () => { setFull(!fullOn); overlayUntil = Date.now() + 6000; }, 28);
+                if (film) { drawFilmBar(cv, A, fullH, film, pb); picBtn(); return; }
                 // the bottom: the channel, the programme, the next, the actions
                 const by = fullH - 200;
                 cv.gradientRect(0, by - 60, W, fullH - by + 60, [[0, A_('#000000', 0)], [0.45, A_('#000000', 0.7)], [1, A_('#000000', 0.88)]]);
@@ -802,6 +1064,8 @@ mgu.run({
                     else if (page === 'home') drawHome(cv, A, x0);
                     else if (page === 'live') drawLive(cv, A, x0);
                     else if (page === 'search') drawSearch(cv, A, x0);
+                    else if (page === 'movies' || page === 'series') drawVod(cv, A, x0, page);
+                    else if (page === 'detail') drawDetail(cv, A, x0);
                     else drawSoon(cv, A, x0);
                 }
                 if (toast && Date.now() < toast.until) {

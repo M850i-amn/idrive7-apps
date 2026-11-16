@@ -11,7 +11,8 @@
  * shows; a press or a push of the knob shows the controls. HOME leaves the app: the page is no longer shown and
  * neither is this.
  *
- *   const fv = createFullView({ RenderClient, Recorder, appId, log, W });
+ *   const fv = createFullView({ RenderClient, Recorder, appId, log, W, off });
+ *   off: no second connection (the kit's emulator keeps one connection per app: the two would close each other)
  *   fv.update(want)           each frame and each second: true while the player should be over the whole screen
  *   fv.draw(fn)               fn(rec, H) records a frame; returns the targets the frame drew
  *   fv.shown()                true while the layer is up
@@ -28,6 +29,7 @@ const KEEPALIVE_MS = 800;   // mgu-render hides a layer that sends nothing for 3
 function createFullView(o) {
     const log = o.log;
     const scale = SCREEN_W / o.W, H = Math.round(SCREEN_H / scale);
+    if (o.off) return { H, scale, touch() {}, update() {}, shown: () => false, video() {}, draw: () => [] };
     const gpu = new o.RenderClient(o.appId, log, { native: true });
     const rec = new o.Recorder(o.W, H, { textScale: scale });
     let ready = false, want = false, shown = false, targets = [], lastFrame = 0, down = null, lastCcu = null;
