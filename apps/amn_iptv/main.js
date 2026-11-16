@@ -36,13 +36,14 @@ const svc = require('./svc');
 const park = require('./parkgate');
 const { createCarAudio } = require('./car_audio');
 const { createFullView } = require('./fullview');
+const LANGS = require('./langs');
 const { RenderClient } = require('./kit/renderd');
 const WHEEL = require('./wheel');
 const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -113,6 +114,9 @@ mgu.run({
             try { resume = JSON.parse(fs.readFileSync(RESUME_FILE, 'utf8')) || {}; } catch (e) { /* none yet */ }
             const say = (text, ms) => { toast = { text, until: Date.now() + (ms || 3000) }; };
             const settingsGet = (k) => settings.get(k);
+            // the languages the owner keeps (setting 'langs'): a category in another is not shown anywhere
+            const langSet = () => settingsGet('langs') || 'efa';
+            const langOK = (name) => LANGS.kept(name, langSet());
 
             /* favourites: the app's data folder */
             const FAV_FILE = path.join(ctx.dataDir, 'favourites.json');
@@ -167,7 +171,8 @@ mgu.run({
             function orderedCats() {
                 const mine = {};
                 favs.forEach((f) => { mine[String(f.cat)] = true; });
-                return cats.filter((c) => mine[String(c.id)]).concat(cats.filter((c) => !mine[String(c.id)]));
+                const shown = cats.filter((c) => langOK(c.name));
+                return shown.filter((c) => mine[String(c.id)]).concat(shown.filter((c) => !mine[String(c.id)]));
             }
             let catsPlaced = false;
             function loadList(cat) {
@@ -413,7 +418,8 @@ mgu.run({
                 svc.ask({ cmd: VC[kind][0] }, 70000).then((r) => {
                     if (r.error && !(r.categories || []).length) { v.err = r.error; v.errAt = Date.now(); return; }
                     v.cats = r.categories || []; v.err = null;
-                    if (v.sel === null && v.cats.length) v.sel = v.cats[0].id;
+                    const first = v.cats.filter((c) => langOK(c.name))[0];
+                    if (v.sel === null && first) v.sel = first.id;
                 }, (e) => { v.err = e.message; v.errAt = Date.now(); }).then(() => { v.busy = false; });
             }
             function loadVodList(kind, cat) {
@@ -479,8 +485,9 @@ mgu.run({
                 cv.text(kind === 'movies' ? 'Search movies' : 'Search series', spx + 54, A.y + 35, 20, '#7a7a82', M);
                 btn(cv, 'vsearch_' + kind, spx, A.y + 4, spw, 46, () => { setSearchMode(kind); go('search'); }, 23);
                 glass(cv, x0, top, colW, A.bottom - top, 18, C.rail);
-                const cl = v.cats || [], visRows = Math.floor((A.bottom - top - 16) / rowH), maxC = Math.max(0, (cl.length - visRows) * rowH);
+                const cl = (v.cats || []).filter((c) => langOK(c.name)), visRows = Math.floor((A.bottom - top - 16) / rowH), maxC = Math.max(0, (cl.length - visRows) * rowH);
                 scroll.vcats = Math.min(scroll.vcats, maxC);
+                if (cl.length && !cl.some((c) => c.id === v.sel)) { v.sel = cl[0].id; scroll.vgrid = 0; }   // the languages changed
                 regions.push({ key: 'vcats', x: x0, y: top, w: colW, h: A.bottom - top, max: maxC });
                 cv.clip(x0, top + 6, colW, A.bottom - top - 12);
                 if (!cl.length) cv.text(fit(cv, v.err ? 'Could not load: ' + v.err : 'Loading...', 17, colW - 40, M), x0 + 20, top + 40, 17, v.err ? C.red : C.grey, M);
@@ -819,7 +826,7 @@ mgu.run({
                 const q = search.text.trim(), mode = search.mode;
                 if (q.length < 2 || q === search.asked || search.busy) return;
                 search.busy = true; search.asked = q; scroll.results = 0;
-                const ask = mode === 'channels' ? svc.ask({ cmd: 'search', q }, 130000) : svc.ask({ cmd: 'vod-search', kind: mode, q }, 130000);
+                const ask = mode === 'channels' ? svc.ask({ cmd: 'search', q }, 130000) : svc.ask({ cmd: 'vod-search', kind: mode, q, langs: langSet() }, 130000);
                 ask.then((r) => {
                     search.busy = false;
                     if (search.text.trim() !== q || search.mode !== mode) { search.asked = ''; return; }
@@ -851,7 +858,8 @@ mgu.run({
                 // the results, beside the keyboard
                 const kbW = Math.min(720, Math.round((right - x0) * 0.52)), rx = x0 + kbW + 20, rw = right - rx, ry = y + h + 18;
                 const res = search.results, vodMode = search.mode !== 'channels';
-                const list = res ? (vodMode ? res.items : shownList(res.channels)) : [];
+                const catOK = (c) => { const k = cats.filter((x) => x.id === c.cat)[0]; return !k || langOK(k.name); };
+                const list = res ? (vodMode ? res.items : shownList(res.channels).filter(catOK)) : [];
                 const what = { channels: 'channel', movies: 'movie', series: 'series' }[search.mode];
                 const prog = res && res.progress;
                 if (search.busy && !(res && res.items && res.items.length)) cv.text(prog ? 'Searching...' : 'Searching every ' + what + '...', rx, ry + 30, 18, C.grey, M);
@@ -944,8 +952,13 @@ mgu.run({
                 if (msg && !panel) {
                     cv.text(msg, W / 2, mid - 10, 34, C.text, Object.assign({ align: 'center' }, B));
                     if (sub) cv.text(fit(cv, sub, 19, W - 200, M), W / 2, mid + 30, 19, C.grey, Object.assign({ align: 'center' }, M));
+                    // nothing plays where something was asked for, or it failed: the service's last words (a photo of them says why)
+                    if ((!subject || pb.state === 'idle' || pb.state === 'error') && st && Array.isArray(st.log) && (playingFilm || playingCh)) {
+                        st.log.slice(-4).forEach((l, i) => cv.text(fit(cv, String(l), 15, W - 240, M), W / 2, mid + 70 + i * 22, 15, '#8a8a92', Object.assign({ align: 'center' }, M)));
+                    }
                 }
-                const show = msg || Date.now() < overlayUntil || panel;
+                // the controls (the arrow among them) only after a tap: the picture, or the message, stays clean otherwise
+                const show = Date.now() < overlayUntil || panel;
                 // why there is no sound, said over the picture: the player's, the speakers' (lib/car_audio.js)
                 const snd = soundProblem(pb);
                 if (snd && !msg) {
@@ -956,12 +969,16 @@ mgu.run({
                 // a tap anywhere else shows the controls (or hides them): drawn last, since the kit gives a tap to the
                 // first target under the finger and this one, drawn first, took every tap (the back arrow, the actions)
                 const picBtn = () => btn(cv, 'pic', 0, A.y, W, fullH - A.y, () => { if (Date.now() < overlayUntil && !panel) overlayUntil = 0; else overlayUntil = Date.now() + 6000; panel = null; }, 0);
-                if (!show || !subject) { picBtn(); return; }
+                // the back arrow: a tap shows it on every screen, nothing playing included (0.2.2 in the car: a dead end)
+                const backArrow = () => {
+                    cv.roundRect(A.x, A.y, 56, 56, 28, A_('#ffffff', 0.18));
+                    cv.line(A.x + 33, A.y + 16, A.x + 21, A.y + 28, 3.5, C.text); cv.line(A.x + 21, A.y + 28, A.x + 33, A.y + 40, 3.5, C.text);
+                    btn(cv, 'p_back', A.x, A.y, 56, 56, () => { page = (film || playingFilm) && detail ? 'detail' : 'home'; panel = null; }, 28);
+                };
+                if (!show || !subject) { if (show) backArrow(); picBtn(); return; }
                 // the top: back, LIVE
                 cv.gradientRect(0, 0, W, 140, [[0, A_('#000000', 0.6)], [1, A_('#000000', 0)]]);
-                cv.roundRect(A.x, A.y, 56, 56, 28, A_('#ffffff', 0.18));
-                cv.line(A.x + 33, A.y + 16, A.x + 21, A.y + 28, 3.5, C.text); cv.line(A.x + 21, A.y + 28, A.x + 33, A.y + 40, 3.5, C.text);
-                btn(cv, 'p_back', A.x, A.y, 56, 56, () => { page = film && detail ? 'detail' : 'home'; panel = null; }, 28);
+                backArrow();
                 // LIVE, or a film's time
                 const tag = film ? hms(pb.pos || 0) + (pb.duration ? ' / ' + hms(pb.duration) : '') : 'LIVE';
                 const tw = film ? cv.textWidth(tag, 20, B) + 40 : 92;

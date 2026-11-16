@@ -28,6 +28,7 @@ const { createNet } = require('./netx');
 const { createXtream } = require('./xtream');
 const { createPlayback, ascii } = require('./playback');
 const { createFilm } = require('./film');
+const LANGS = require('./langs');
 
 const send = (m) => { try { if (process.connected) process.send(m); } catch (e) { /* the parent is gone */ } };
 const log = (line) => send({ ev: 'log', line });
@@ -113,7 +114,7 @@ function run(account) {
     forget();
     refresh(true);
 }
-function stop() { running = false; clearTimeout(timer); pb.stop(); fm.stop(); vodKept.clear(); vodIndex.movies = vodIndex.series = null; }
+function stop() { running = false; clearTimeout(timer); pb.stop(); fm.stop(); vodKept.clear(); Object.keys(vodIndex).forEach((k) => { delete vodIndex[k]; }); }
 
 const view = (c) => ({ id: c.id, name: ascii(c.name), icon: c.icon, cat: c.cat, num: c.num, hevc: c.hevc });
 
@@ -163,24 +164,36 @@ function rank(list, q, n) {
 /* every film or every series of the account, for search: indexed category by category in the background (an
    account's whole list in one answer is tens of megabytes: on the car it took minutes and could pass ALL_MAX), two
    categories at a time; a search answers from what is indexed so far, with the progress, and the app asks again
-   until it is complete. Kept 6 hours; the categories' lists also serve browsing (vodKept). */
-const vodIndex = { movies: null, series: null };   // { items: Map id -> item, done, total, at, running, error }
+   until it is complete. Kept 6 hours. Lean: the service, the client and the player share 256 MiB (the unit's
+   MemoryLimit; 0.2.2 indexed all 207 categories of the owner's account, with a second copy for browsing, while a
+   film played: the client was likely killed). So only what search shows is kept, nothing twice, and the indexing
+   waits while something plays (memory and the car's internet are the film's). */
+const vodIndex = {};   // '<movies|series>:<langs>' -> { items: Map id -> item, done, total, at, running, error }
 const INDEX_MS = 6 * 3600000;
-function indexOf(kind) {
-    let ix = vodIndex[kind];
+const INDEX_MAX = 60000;          // entries: about 15 MiB at most
+const PLAYING_STATES = ['loading', 'playing', 'buffering'];
+const playingNow = () => PLAYING_STATES.indexOf((fm.active() ? fm.status() : pb.status()).state) >= 0;
+function indexOf(kind, langs) {
+    const key = kind + ':' + langs;
+    let ix = vodIndex[key];
     if (ix && (ix.running || (ix.at && Date.now() - ix.at < INDEX_MS) || (ix.error && Date.now() - ix.failedAt < 30000))) return ix;
-    ix = vodIndex[kind] = { items: new Map(), done: 0, total: 0, at: 0, running: true, error: null, failedAt: 0 };
+    ix = vodIndex[key] = { items: new Map(), done: 0, total: 0, at: 0, running: true, error: null, failedAt: 0 };
     const cats = kind === 'series' ? xt.seriesCategories() : xt.filmCategories();
-    cats.then(async (list) => {
+    cats.then(async (all) => {
+        const list = all.filter((c) => LANGS.kept(c.name, langs));   // the owner's languages only (langs.js)
         ix.total = list.length;
         let next = 0;
         const worker = async () => {
-            while (next < list.length && vodIndex[kind] === ix) {
+            while (next < list.length && vodIndex[key] === ix) {
+                while (playingNow() && vodIndex[key] === ix) await new Promise((r) => setTimeout(r, 3000));
                 const c = list[next++];
                 try {
                     const items = await (kind === 'series' ? xt.series(c.id) : xt.films(c.id));
-                    items.forEach((x) => { const name = ascii(x.name); ix.items.set(x.id, Object.assign({}, x, { name, key: name.toLowerCase() })); });
-                    vodKept.set((kind === 'series' ? 's:' : 'f:') + c.id, { at: Date.now(), v: items.map((x) => Object.assign({}, x, { name: ascii(x.name) })) });
+                    items.forEach((x) => {
+                        if (ix.items.size >= INDEX_MAX) return;
+                        const name = ascii(x.name);
+                        ix.items.set(x.id, { id: x.id, name, key: name.toLowerCase(), poster: x.poster, year: x.year, rating: x.rating, ext: x.ext, hevc: !!x.hevc });
+                    });
                 } catch (e) { log(kind + ' index: ' + c.id + ': ' + e.message); }
                 ix.done++;
             }
@@ -191,8 +204,8 @@ function indexOf(kind) {
     }).catch((e) => { ix.running = false; ix.error = e.message; ix.failedAt = Date.now(); log(kind + ' index: ' + e.message); });
     return ix;
 }
-function vodSearch(kind, q) {
-    const ix = indexOf(kind === 'series' ? 'series' : 'movies');
+function vodSearch(kind, q, langs) {
+    const ix = indexOf(kind === 'series' ? 'series' : 'movies', LANGS.SETS[langs] ? langs : 'all');
     if (ix.error && !ix.items.size) return Promise.reject(new Error(ix.error));
     const items = rank(Array.from(ix.items.values()), q, 60).map((x) => { const v = Object.assign({}, x); delete v.key; return v; });
     return Promise.resolve({ items, done: ix.done, total: ix.total, complete: !ix.running });
@@ -238,7 +251,7 @@ function answer(m) {
     const kept = (key, fn) => { const k = vodKept.get(key); if (k && Date.now() - k.at < 600000) return Promise.resolve(k.v);
         return fn().then((v) => { vodKept.set(key, { at: Date.now(), v }); if (vodKept.size > 200) vodKept.clear(); return v; }); };
     const cats = (l) => l.map((c) => ({ id: c.id, name: ascii(c.name) }));
-    if (m.what === 'vod-search') return reply(vodSearch(String(m.kind || ''), String(m.q || '')));
+    if (m.what === 'vod-search') return reply(vodSearch(String(m.kind || ''), String(m.q || ''), String(m.langs || 'all')));
     if (m.what === 'film-cats') return reply(kept('fc', () => xt.filmCategories().then(cats)));
     if (m.what === 'films') return reply(kept('f:' + m.cat, () => xt.films(String(m.cat || '')).then((l) => l.map(A))));
     if (m.what === 'film-info') return reply(kept('fi:' + m.vid, () => xt.filmInfo(String(m.vid || '')).then(A)));

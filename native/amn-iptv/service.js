@@ -33,7 +33,7 @@
  *   {"cmd":"series","cat":<id>}               -> { cat, series: [{ id, name, poster, cat, rating, year }] } or { error }
  *   {"cmd":"film-info","id":<id>}             -> { id, info: { name, poster, plot, genre, year, rating, duration, ext, codec, hevc } } or { error }
  *   {"cmd":"series-info","id":<id>}           -> { id, info: { name, poster, plot, genre, year, seasons: [{ n, episodes: [...] }] } } or { error }
- *   {"cmd":"vod-search","kind":"movies"|"series","q":".."} -> { kind, q, items: [...], done, total, complete } (60 at most,
+ *   {"cmd":"vod-search","kind":"movies"|"series","q":"..","langs":"efa"|"ef"|"all"} -> { kind, q, items: [...], done, total, complete } (60 at most,
  *                                             from the categories indexed so far: ask again until complete)
  *   {"cmd":"film-play","kind":"movie"|"series","id":<id>,"ext":"mp4","name":..,"start":<s>,"duration":<s>}
  *   {"cmd":"film-seek","pos":<s>} {"cmd":"film-pause"} {"cmd":"film-resume"}  -> the status (its playback: film.js's)
@@ -53,7 +53,7 @@ const nftm = require('./nft');
 const pagem = require('./page');
 const { createPlayer } = require('./player');
 
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 const PAGE_PORT = 8493;   // aurelm: Emby 8490, TVH (bmw-test-apps) 8491, TVH Player 8492: all may be open at once
 const PAGE_MINUTES = 10;
 const IDLE_MS = 10 * 60 * 1000;
@@ -374,7 +374,8 @@ function createService(opts) {
             return ask(cmd, { vid: String(m.id) }, 30000).then((info) => ({ id: String(m.id), info }), (e) => ({ id: String(m.id), error: e.message }));
         } else if (cmd === 'vod-search') {
             const kind = m.kind === 'series' ? 'series' : 'movies', q = String(m.q || '').slice(0, 60);
-            return ask('vod-search', { kind, q }, 20000).then((r) => Object.assign({ kind, q }, r), (e) => ({ kind, q, items: [], error: e.message }));
+            const langs = ['efa', 'ef', 'all'].indexOf(m.langs) >= 0 ? m.langs : 'all';
+            return ask('vod-search', { kind, q, langs }, 20000).then((r) => Object.assign({ kind, q }, r), (e) => ({ kind, q, items: [], error: e.message }));
         } else if (cmd === 'film-play' && isId(m.id)) {
             const f = { kind: m.kind === 'series' ? 'series' : 'movie', id: Number(m.id), ext: /^[a-z0-9]{2,5}$/i.test(String(m.ext || '')) ? String(m.ext) : 'mp4',
                 name: String(m.name || '?').slice(0, 120), start: Math.max(0, Number(m.start) || 0), duration: Number(m.duration) || null };

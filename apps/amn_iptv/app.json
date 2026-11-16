@@ -2,11 +2,15 @@
   "id": "amn_iptv",
   "title": "IPTV",
   "description": "The live TV channels, films and series of your own Xtream Codes IPTV account on the centre screen, in the style of UHF: favourites with what is on now, the TV guide, every category, search, and a full-screen player with the guide and the channel list over the picture. Sign in once from your phone (QR code): the login stays on this car's head unit, never in the app. The picture shows while parked (a setting lets a passenger watch while driving); the sound plays on the car's speakers; the steering wheel's skip changes the channel. Needs the IPTV service and a GPU renderer from the Store.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "vendor": "amn",
   "loggingId": "OAI1",
-  "requires": { "amn-iptv": "0.2.2" },
-  "needs": ["renderer"],
+  "requires": {
+    "amn-iptv": "0.2.3"
+  },
+  "needs": [
+    "renderer"
+  ],
   "signals": {
     "de.bmw.infotainment.vehicle.Vehicle2": {
       "statusCarSpeed2": "rs",
@@ -24,12 +28,18 @@
     },
     "org.genivi.am.commandinterface.CommandControl": {
       "_instances": "1",
-      "_methods": ["connect", "disconnect", "getListMainConnections"],
+      "_methods": [
+        "connect",
+        "disconnect",
+        "getListMainConnections"
+      ],
       "_optional": "the sound on the car's speakers"
     },
     "org.genivi.am.routinginterface.RoutingControlObserver": {
       "_instances": "1",
-      "_methods": ["hookSourceAvailablityStatusChange"],
+      "_methods": [
+        "hookSourceAvailablityStatusChange"
+      ],
       "_optional": "the sound on the car's speakers"
     }
   },
@@ -40,12 +50,30 @@
       "title": "IPTV",
       "fullscreen": true,
       "buttons": [
-        ["BTN_HOME", "Home"],
-        ["BTN_LIVE", "Live TV"],
-        ["BTN_WATCH", "Watch"],
-        ["BTN_STOP", "Stop"],
-        ["BTN_SIGNIN", "Sign in"],
-        ["BTN_SETTINGS", "Settings"]
+        [
+          "BTN_HOME",
+          "Home"
+        ],
+        [
+          "BTN_LIVE",
+          "Live TV"
+        ],
+        [
+          "BTN_WATCH",
+          "Watch"
+        ],
+        [
+          "BTN_STOP",
+          "Stop"
+        ],
+        [
+          "BTN_SIGNIN",
+          "Sign in"
+        ],
+        [
+          "BTN_SETTINGS",
+          "Settings"
+        ]
       ]
     }
   ],
@@ -67,7 +95,44 @@
       "label": "TV sound level",
       "type": "choice",
       "default": "9",
-      "options": [["0", "As broadcast"], ["6", "+6 dB"], ["9", "+9 dB (radio level)"], ["12", "+12 dB"]]
+      "options": [
+        [
+          "0",
+          "As broadcast"
+        ],
+        [
+          "6",
+          "+6 dB"
+        ],
+        [
+          "9",
+          "+9 dB (radio level)"
+        ],
+        [
+          "12",
+          "+12 dB"
+        ]
+      ]
+    },
+    {
+      "key": "langs",
+      "label": "Languages shown (Live TV, Movies, Series, search)",
+      "type": "choice",
+      "default": "efa",
+      "options": [
+        [
+          "efa",
+          "English, French, Arabic"
+        ],
+        [
+          "ef",
+          "English and French"
+        ],
+        [
+          "all",
+          "All languages"
+        ]
+      ]
     },
     {
       "key": "hevc",
@@ -80,7 +145,16 @@
       "label": "Sign out of the IPTV account on this car",
       "type": "choice",
       "default": "no",
-      "options": [["no", "Signed in"], ["yes", "Sign out now"]]
+      "options": [
+        [
+          "no",
+          "Signed in"
+        ],
+        [
+          "yes",
+          "Sign out now"
+        ]
+      ]
     }
   ]
 }
