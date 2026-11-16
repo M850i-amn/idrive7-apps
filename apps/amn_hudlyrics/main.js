@@ -37,7 +37,7 @@ const { HudClaim } = require('./kit/hud_claim');
 // 0.5.0: in Sport, Redline's Ramp tach (after the G80/G82 M3 / M4) on the HUD in place of the lyrics (hud/sport.js)
 const { SportHud } = require('./sport');
 
-const VERSION = '0.5.2';
+const VERSION = '0.5.3';
 const W = 1600, H = 520;
 const IFACES = [
     { iface: 'de.bmw.infotainment.a4a.carplay.CarPlayManager', instances: ['CarPlayManagerInst1'] },
@@ -337,12 +337,21 @@ mgu.run({
                 lyricsPane(cv, now, lyr);
                 statusRow(cv, lyr);
                 // 0.5.1: the Sport HUD's whole status (the renderer's words) across the top while it should show
-                if (sport.wants()) { const sv2 = sport.view(); cv.text(fit(cv, 'SPORT HUD  ' + sv2.text, 16, W - 900, M), 48, 24, 16, sv2.kind === 'on' ? C.green : sv2.kind === 'error' ? C.red : C.amber, M); }
+                // 0.5.3: the Sport HUD's whole status (the renderer's words) as a panel over the lyrics while the tach should
+                // show - 0.5.1's line at the top sat under the HMI's title bar in the car
+                if (sport.wants()) {
+                    const sv2 = sport.view(), px = 600, py = 36, pw = W - 48 - px, ph = 372, col = sv2.kind === 'on' ? C.green : sv2.kind === 'error' ? C.red : C.amber;
+                    cv.roundRect(px, py, pw, ph, 28, '#0b0f17');
+                    cv.strokeRoundRect(px, py, pw, ph, 28, 1, A(col, 0.5));
+                    cv.text('SPORT HUD  ·  RAMP', px + 36, py + 52, 14, col, Object.assign({ spacing: 2.2 }, B));
+                    wrap(cv, sv2.text, 26, pw - 72, 6, M).forEach((r, k) => cv.text(r, px + 36, py + 110 + k * 36, 26, C.text, M));
+                    cv.text('Lyrics on the HUD again outside Sport.', px + 36, py + ph - 28, 17, C.dim, M);
+                }
                 if (toast && now < toast.until) {
                     const s = fit(cv, toast.text, 18, 700, M), tw = cv.textWidth(s, 18, M) + 48;
-                    cv.roundRect(W - 48 - tw, 8, tw, 40, 20, '#000000cc');
-                    cv.strokeRoundRect(W - 48 - tw, 8, tw, 40, 20, 1, A('#ffffff', 0.2));
-                    cv.text(s, W - 48 - tw / 2, 34, 18, C.text, Object.assign({ align: 'center' }, M));
+                    cv.roundRect(W - 48 - tw, 360, tw, 40, 20, '#000000cc');
+                    cv.strokeRoundRect(W - 48 - tw, 360, tw, 40, 20, 1, A('#ffffff', 0.2));
+                    cv.text(s, W - 48 - tw / 2, 386, 18, C.text, Object.assign({ align: 'center' }, M));
                 }
                 await ui.image('MAIN_GFX', cv);
             }));
