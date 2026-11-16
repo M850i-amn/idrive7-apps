@@ -15,6 +15,14 @@
  *   await x.shortEpg(id, n)    [{ start, stop, title, text }] (seconds since 1970), from now
  *   await x.stream(id)         -> { status, res, abort }: /live/<user>/<password>/<id>.ts, redirects followed (netx)
  *   await x.logo(url)          a logo's bytes (PNG or JPEG), at most 1 MiB
+ *   await x.filmCategories()   [{ id, name }]                       films (VOD)
+ *   await x.films(catId)       [{ id, name, poster, cat, rating, year, ext, added }]
+ *   await x.filmInfo(id)       { id, name, poster, plot, genre, year, rating, duration, ext, codec, hevc }
+ *   await x.seriesCategories() [{ id, name }]
+ *   await x.series(catId)      [{ id, name, poster, cat, rating, year }]
+ *   await x.seriesInfo(id)     { id, name, poster, plot, genre, year, seasons: [{ n, episodes: [{ id, n, title, ext, duration, plot, hevc }] }] }
+ *   await x.file(kind, id, ext, range) -> { status, res, abort }: /movie|series/<user>/<password>/<id>.<ext>, with the
+ *                              Range header the player's read asked for (a film is read where the demuxer seeks)
  *   x.profiles()               null: Xtream has no stream profiles (playback.js then keeps one)
  *
  * Privacy: the user and the password are in the API's query string and the stream's path. Nothing here logs a URL,
@@ -150,7 +158,66 @@ function createXtream(o) {
         return b;
     }
 
-    return { signIn, use, info, categories, channels, allChannels, shortEpg, stream, logo, profiles: () => null, account: () => acc };
+    /* ---------- films and series (VOD) ---------- */
+    const img = (u) => (/^https?:\/\//i.test(String(u || '')) ? String(u) : '');
+    const yearOf = (v) => { const m = /\b(19|20)\d\d\b/.exec(String(v || '')); return m ? Number(m[0]) : null; };
+    const EXT = /^[a-z0-9]{2,5}$/i;
+    const extOf = (e) => (EXT.test(String(e || '')) ? String(e).toLowerCase() : 'mp4');
+    const secs = (v) => { if (Number(v) > 0) return Number(v); const m = /^(\d+):(\d\d):(\d\d)$/.exec(String(v || '')); return m ? m[1] * 3600 + m[2] * 60 + Number(m[3]) : null; };
+    const list = (j) => (Array.isArray(j) ? j : []);
+    async function filmCategories() {
+        return list(await call({ action: 'get_vod_categories' })).map((c) => ({ id: String(c.category_id), name: String(c.category_name || '') }));
+    }
+    async function films(catId) {
+        const j = await call({ action: 'get_vod_streams', category_id: String(catId) }, { timeoutMs: ALL_TIMEOUT, maxBytes: ALL_MAX });
+        return list(j).filter((v) => v && v.stream_id).map((v) => ({ id: Number(v.stream_id), name: cleanTitle(v.name), poster: img(v.stream_icon),
+            cat: String(v.category_id || ''), rating: Number(v.rating) || null, year: yearOf(v.year || v.name), ext: extOf(v.container_extension),
+            added: Number(v.added) || null, hevc: HEVC.test(String(v.name || '')) }));
+    }
+    async function filmInfo(id) {
+        const j = await call({ action: 'get_vod_info', vod_id: String(id) });
+        const i = (j && j.info) || {}, d = (j && j.movie_data) || {}, codec = String((i.video && i.video.codec_name) || '').toLowerCase();
+        return { id: Number(id), name: cleanTitle(d.name || i.name), poster: img(i.movie_image || i.cover_big), plot: String(i.plot || i.description || '').slice(0, 1500),
+            genre: String(i.genre || ''), year: yearOf(i.releasedate || i.release_date || d.name), rating: Number(i.rating) || null,
+            duration: secs(i.duration_secs) || secs(i.duration), ext: extOf(d.container_extension), codec: codec || null,
+            hevc: codec ? codec !== 'h264' : HEVC.test(String(d.name || '')) };
+    }
+    async function seriesCategories() {
+        return list(await call({ action: 'get_series_categories' })).map((c) => ({ id: String(c.category_id), name: String(c.category_name || '') }));
+    }
+    async function series(catId) {
+        const j = await call({ action: 'get_series', category_id: String(catId) }, { timeoutMs: ALL_TIMEOUT, maxBytes: ALL_MAX });
+        return list(j).filter((v) => v && v.series_id).map((v) => ({ id: Number(v.series_id), name: cleanTitle(v.name), poster: img(v.cover),
+            cat: String(v.category_id || ''), rating: Number(v.rating) || null, year: yearOf(v.releaseDate || v.release_date || v.name) }));
+    }
+    async function seriesInfo(id) {
+        const j = await call({ action: 'get_series_info', series_id: String(id) });
+        const i = (j && j.info) || {}, eps = (j && j.episodes) || {};
+        const seasons = Object.keys(eps).map((k) => ({ n: Number(k) || 0, episodes: list(eps[k]).filter((e) => e && e.id).map((e) => {
+            const ei = e.info || {}, codec = String((ei.video && ei.video.codec_name) || '').toLowerCase();
+            return { id: Number(e.id), n: Number(e.episode_num) || null, title: cleanTitle(e.title), ext: extOf(e.container_extension),
+                duration: secs(ei.duration_secs) || secs(ei.duration), plot: String(ei.plot || '').slice(0, 600), hevc: codec ? codec !== 'h264' : false };
+        }).sort((a, b) => (a.n || 0) - (b.n || 0)) })).filter((x) => x.episodes.length).sort((a, b) => a.n - b.n);
+        return { id: Number(id), name: cleanTitle(i.name), poster: img(i.cover), plot: String(i.plot || '').slice(0, 1500), genre: String(i.genre || ''),
+            year: yearOf(i.releaseDate || i.release_date), seasons };
+    }
+    /** a film's or an episode's bytes from `range` ("bytes=a-b", or none: the whole), as the player's read asks */
+    function file(kind, id, ext, range) {
+        need();
+        const sid = String(id);
+        if (!/^\d+$/.test(sid) || (kind !== 'movie' && kind !== 'series') || !EXT.test(String(ext || ''))) return Promise.reject(new Error('not a film'));
+        const u = acc.server + '/' + kind + '/' + encodeURIComponent(acc.user) + '/' + encodeURIComponent(acc.password) + '/' + sid + '.' + String(ext).toLowerCase();
+        const headers = { 'User-Agent': UA, Accept: '*/*' };
+        if (range && /^bytes=\d*-\d*$/.test(range)) headers.Range = range;
+        return nx.stream({ url: u, headers, timeoutMs: 30000 }).catch((e) => {
+            const x = new Error('the film did not open (' + (e.code || 'no answer from ' + hostOf(acc.server)) + ')');
+            x.code = e.code;
+            throw x;
+        });
+    }
+
+    return { signIn, use, info, categories, channels, allChannels, shortEpg, stream, logo, profiles: () => null, account: () => acc,
+        filmCategories, films, filmInfo, seriesCategories, series, seriesInfo, file };
 }
 
 module.exports = { createXtream, candidates, hostOf, cleanTitle, HEVC, UA };

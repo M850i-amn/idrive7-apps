@@ -8,10 +8,12 @@
  *   parent -> { op: 'run', account } | { op: 'signin', id, server, user, password } | { op: 'signout' } | { op: 'stop' }
  *             | { op: 'play', channel } | { op: 'playback-stop' } | { op: 'prefs', prefs } | { op: 'refresh' }
  *             | { op: 'player', id, ev } (the player's events)
+ *             | { op: 'film-play', film } | { op: 'film-seek', pos } | { op: 'film-pause' } | { op: 'film-resume' } (film.js)
  *             | { op: 'ask', id, what: 'channels', cat } | { what: 'search', q } | { what: 'now', ids } | { what: 'epg', sid }
- *             | { what: 'logo', icon }
+ *             | { what: 'logo', icon } | { what: 'film-cats' } | { what: 'films', cat } | { what: 'film-info', vid }
+ *             | { what: 'series-cats' } | { what: 'series', cat } | { what: 'series-info', vid }
  *   child  -> { ev: 'status', status } | { ev: 'signin', id, ok, account | error } | { ev: 'categories', at, categories }
- *             | { ev: 'playback', status } | { ev: 'player-start', id } | { ev: 'player-ctl', id, line } | { ev: 'player-stop', id }
+ *             | { ev: 'playback', status } | { ev: 'player-start', id, env? } | { ev: 'player-ctl', id, line } | { ev: 'player-stop', id }
  *             | { ev: 'signed-out', why } | { ev: 'log', line } | { ev: 'ready', uid } | { ev: 'answer', id, ok, value | error }
  *
  * The channel's stream goes to the parent on fd 4 (the parent hands it to tvh-player's stdin), in frames: a stream
@@ -25,6 +27,7 @@ const net = require('net');
 const { createNet } = require('./netx');
 const { createXtream } = require('./xtream');
 const { createPlayback, ascii } = require('./playback');
+const { createFilm } = require('./film');
 
 const send = (m) => { try { if (process.connected) process.send(m); } catch (e) { /* the parent is gone */ } };
 const log = (line) => send({ ev: 'log', line });
@@ -38,7 +41,7 @@ try { pipe = new net.Socket({ fd: 4, readable: false, writable: true }); pipe.on
 catch (e) { log('no stream pipe: ' + e.message); }
 function frame(id, len) { const h = Buffer.alloc(8); h.writeUInt32LE(id >>> 0, 0); h.writeUInt32LE(len >>> 0, 4); return h; }
 const sink = {
-    start(id) { send({ ev: 'player-start', id }); },
+    start(id, env) { send(env ? { ev: 'player-start', id, env } : { ev: 'player-start', id }); },
     data(id, buf) { if (!pipe) return true; pipe.write(frame(id, buf.length)); return pipe.write(buf); },
     end(id) { if (pipe) pipe.write(frame(id, 0xffffffff)); },
     drain(id, fn) { if (pipe) pipe.once('drain', fn); else fn(); },
@@ -56,11 +59,15 @@ const pb = createPlayback({ tvh: xt, log, sink, profiles: () => null, retryMs: p
     adaptUpMs: Number(process.env.TVH_ADAPT_UP_MS) || undefined, outageMs: Number(process.env.TVH_OUTAGE_MS) || undefined,
     dataMs: Number(process.env.TVH_STREAM_DATA_MS) || undefined });
 
+// films and series (film.js): the player reads the film from the account itself, through 127.0.0.1
+let lastPrefs = null;
+const fm = createFilm({ xt, log, sink, prefs: () => lastPrefs });
+
 function status() { send({ ev: 'status', status: JSON.parse(JSON.stringify(st)) }); }
 function setState(state, error) { st.state = state; st.error = error || null; st.since = Date.now(); status(); }
 let lastSent = '';
 function playbackStatus() {
-    const j = JSON.stringify(pb.status());
+    const j = JSON.stringify(fm.active() ? fm.status() : pb.status());
     if (j !== lastSent) { lastSent = j; send({ ev: 'playback', status: JSON.parse(j) }); }
 }
 setInterval(playbackStatus, 1000);
@@ -106,7 +113,7 @@ function run(account) {
     forget();
     refresh(true);
 }
-function stop() { running = false; clearTimeout(timer); pb.stop(); }
+function stop() { running = false; clearTimeout(timer); pb.stop(); fm.stop(); vodKept.clear(); }
 
 const view = (c) => ({ id: c.id, name: ascii(c.name), icon: c.icon, cat: c.cat, num: c.num, hevc: c.hevc });
 
@@ -176,6 +183,7 @@ async function guide(sid) {
     const list = await xt.shortEpg(sid, 24);
     return list.map((x) => ({ start: x.start, stop: x.stop, title: ascii(x.title), text: ascii(x.text), isNew: !!x.isNew }));
 }
+const vodKept = new Map();   // films and series lists and details, 10 minutes
 function answer(m) {
     const reply = (p) => p.then((value) => send({ ev: 'answer', id: m.id, ok: true, value }), (e) => send({ ev: 'answer', id: m.id, ok: false, error: e.message }));
     if (!xt.account()) return reply(Promise.reject(new Error('not signed in')));
@@ -184,6 +192,19 @@ function answer(m) {
     if (m.what === 'now') return reply(nowOf(m.ids));
     if (m.what === 'epg') return reply(guide(String(m.sid || '')));
     if (m.what === 'logo') return reply(xt.logo(m.icon).then((b) => b.toString('base64')));
+    // films and series: names, plots and titles in ASCII (the kit's fonts), lists kept 10 minutes
+    const A = (x) => Object.assign({}, x, x.name != null ? { name: ascii(x.name) } : {}, x.title != null ? { title: ascii(x.title) } : {},
+        x.plot != null ? { plot: ascii(x.plot) } : {}, x.genre != null ? { genre: ascii(x.genre) } : {});
+    const kept = (key, fn) => { const k = vodKept.get(key); if (k && Date.now() - k.at < 600000) return Promise.resolve(k.v);
+        return fn().then((v) => { vodKept.set(key, { at: Date.now(), v }); if (vodKept.size > 200) vodKept.clear(); return v; }); };
+    const cats = (l) => l.map((c) => ({ id: c.id, name: ascii(c.name) }));
+    if (m.what === 'film-cats') return reply(kept('fc', () => xt.filmCategories().then(cats)));
+    if (m.what === 'films') return reply(kept('f:' + m.cat, () => xt.films(String(m.cat || '')).then((l) => l.map(A))));
+    if (m.what === 'film-info') return reply(kept('fi:' + m.vid, () => xt.filmInfo(String(m.vid || '')).then(A)));
+    if (m.what === 'series-cats') return reply(kept('sc', () => xt.seriesCategories().then(cats)));
+    if (m.what === 'series') return reply(kept('s:' + m.cat, () => xt.series(String(m.cat || '')).then((l) => l.map(A))));
+    if (m.what === 'series-info') return reply(kept('si:' + m.vid, () => xt.seriesInfo(String(m.vid || '')).then((v) =>
+        Object.assign(A(v), { seasons: v.seasons.map((x) => ({ n: x.n, episodes: x.episodes.map(A) })) }))));
     return reply(Promise.reject(new Error('unknown question')));
 }
 
@@ -192,10 +213,14 @@ process.on('message', (m) => {
     if (m.op === 'run') run(m.account);
     else if (m.op === 'stop') stop();
     else if (m.op === 'refresh') refresh(true);
-    else if (m.op === 'player') { pb.onPlayer(m.id, m.ev); if (m.ev && m.ev.ev !== 'tick') playbackStatus(); }
-    else if (m.op === 'play') { pb.play(m.channel); playbackStatus(); }
-    else if (m.op === 'playback-stop') { pb.stop(); playbackStatus(); }
-    else if (m.op === 'prefs') { pb.setPrefs(m.prefs); playbackStatus(); }
+    else if (m.op === 'player') { if (fm.owns(m.id)) fm.onPlayer(m.id, m.ev); else pb.onPlayer(m.id, m.ev); if (m.ev && m.ev.ev !== 'tick') playbackStatus(); }
+    else if (m.op === 'play') { fm.stop(); pb.play(m.channel); playbackStatus(); }
+    else if (m.op === 'playback-stop') { fm.stop(); pb.stop(); playbackStatus(); }
+    else if (m.op === 'prefs') { lastPrefs = m.prefs; pb.setPrefs(m.prefs); playbackStatus(); }
+    else if (m.op === 'film-play' && m.film) { pb.stop(); fm.play(m.film); playbackStatus(); }
+    else if (m.op === 'film-seek') { fm.seek(m.pos); playbackStatus(); }
+    else if (m.op === 'film-pause') { fm.pause(); playbackStatus(); }
+    else if (m.op === 'film-resume') { fm.resume(); playbackStatus(); }
     else if (m.op === 'ask') answer(m);
     else if (m.op === 'signout') { stop(); xt.use(null); forget(); setState('signed-out'); send({ ev: 'signed-out', why: 'signed out' }); }
     else if (m.op === 'signin') {

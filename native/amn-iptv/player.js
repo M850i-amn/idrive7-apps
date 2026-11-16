@@ -16,7 +16,8 @@
  *
  *   const pl = createPlayer({ bin, uid, groups, videoPath, env, log, onEvent(id, ev) });
  *   pl.attach(readable)     the client's fd 4
- *   pl.start(id) / pl.ctl(id, line) / pl.stop(id) / pl.stopAll() -> Promise
+ *   pl.start(id, env) / pl.ctl(id, line) / pl.stop(id) / pl.stopAll() -> Promise
+ *   env (a film, film.js): MGU_INPUT_URL (its address on 127.0.0.1) and MGU_START_S, checked in service.js
  *   pl.state()              { id, pid, running, decoder, audio, open, last tick, exits }
  *
  * Plain Node 8.
@@ -98,9 +99,9 @@ function createPlayer(o) {
             if (b.length > 65536) b = '';
         });
     }
-    function start(id) {
+    function start(id, extraEnv) {
         const old = cur;
-        const c = { id, child: null, ended: false, paused: false, done: false, pending: [], pendingBytes: 0, lines: [] };
+        const c = { id, env: extraEnv || null, child: null, ended: false, paused: false, done: false, pending: [], pendingBytes: 0, lines: [] };
         cur = c;
         Object.assign(st, { id, pid: null, running: false, open: null, decoder: null, audio: null, error: null, tick: null, end: null });
         (old ? kill(old) : Promise.resolve()).then(() => { if (cur === c) spawn(c); });
@@ -117,7 +118,7 @@ function createPlayer(o) {
         const id = c.id;
         if (!fs.existsSync(o.bin)) return failed(c, 'the player is missing: ' + o.bin);
         const env = Object.assign({ HOME: '/tmp', PATH: '/usr/bin:/bin', MGU_VIDEO_PATH: videoPath, MGU_VIDEO_SIZE: VIDEO_SIZE,
-            MGU_AUDIO: 'alsa:' + AUDIO_DEVICE, MGU_ALSA_US: '64000', MGU_PREBUFFER_MS: PREBUFFER_MS }, o.env || {});
+            MGU_AUDIO: 'alsa:' + AUDIO_DEVICE, MGU_ALSA_US: '64000', MGU_PREBUFFER_MS: PREBUFFER_MS }, o.env || {}, c.env || {});
         // as root (the car): the player drops to nobody with the groups itself (Node gives a child no
         // supplementary groups); uid null: as this process (the tests)
         if (o.uid != null && process.getuid && process.getuid() === 0) {

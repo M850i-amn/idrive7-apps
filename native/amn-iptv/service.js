@@ -27,6 +27,14 @@
  *   {"cmd":"now","ids":[...]}                 -> { now: { <id>: { now, next } } } (30 ids at most)
  *   {"cmd":"epg","id":<stream id>}            -> { id, events: [{ start, stop, title, text, isNew }] } or { id, error }
  *   {"cmd":"logo","id":<stream id>,"icon":url}-> { id, img: base64 (PNG or JPEG) } or { id, none: true, why }
+ *                                             (a poster: id "f<film id>" or "s<series id>")
+ *   {"cmd":"film-cats"} {"cmd":"series-cats"} -> { categories: [{ id, name }] } or { error }
+ *   {"cmd":"films","cat":<id>}                -> { cat, films: [{ id, name, poster, cat, rating, year, ext, added, hevc }] } or { error }
+ *   {"cmd":"series","cat":<id>}               -> { cat, series: [{ id, name, poster, cat, rating, year }] } or { error }
+ *   {"cmd":"film-info","id":<id>}             -> { id, info: { name, poster, plot, genre, year, rating, duration, ext, codec, hevc } } or { error }
+ *   {"cmd":"series-info","id":<id>}           -> { id, info: { name, poster, plot, genre, year, seasons: [{ n, episodes: [...] }] } } or { error }
+ *   {"cmd":"film-play","kind":"movie"|"series","id":<id>,"ext":"mp4","name":..,"start":<s>,"duration":<s>}
+ *   {"cmd":"film-seek","pos":<s>} {"cmd":"film-pause"} {"cmd":"film-resume"}  -> the status (its playback: film.js's)
  *
  * The app's watch: while a channel plays, the app asks every second or two; 90 s without a request (the app was
  * closed, or crashed) and the channel stops.
@@ -43,7 +51,7 @@ const nftm = require('./nft');
 const pagem = require('./page');
 const { createPlayer } = require('./player');
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const PAGE_PORT = 8493;   // aurelm: Emby 8490, TVH (bmw-test-apps) 8491, TVH Player 8492: all may be open at once
 const PAGE_MINUTES = 10;
 const IDLE_MS = 10 * 60 * 1000;
@@ -108,6 +116,7 @@ function createService(opts) {
         });
     }
     const isId = (v) => /^\d{1,10}$/.test(String(v));
+    const isLogoId = (v) => /^[fs]?\d{1,10}$/.test(String(v));     // a channel's, or a film's (f) or a series' (s) poster
 
     /* ---------- a channel's guide, kept 3 minutes ---------- */
     const epgKept = {};
@@ -124,7 +133,7 @@ function createService(opts) {
     const logoNone = {};
     const logoStats = { fetched: 0, failed: 0, last: null };
     function logo(id, icon) {
-        if (!isId(id)) return Promise.resolve({ id, none: true, why: 'not a channel' });
+        if (!isLogoId(id)) return Promise.resolve({ id, none: true, why: 'not a channel' });
         icon = String(icon || '');
         if (!/^https?:\/\//i.test(icon)) return Promise.resolve({ id, none: true, quiet: true, why: 'no logo' });
         const f = path.join(logoDir, id + '.img'), fu = path.join(logoDir, id + '.url');
@@ -156,6 +165,14 @@ function createService(opts) {
     /* ---------- the player (root: its frame file; it runs as nobody) ---------- */
     const player = createPlayer({ bin: o.playerBin, uid: o.uid, env: o.playerEnv, videoPath: o.videoPath, log,
         onEvent: (id, ev) => toChild({ op: 'player', id, ev }) });
+
+    /* a film's player: its address on 127.0.0.1 (film.js: a random port and 128-bit path) and its start, nothing else */
+    function filmEnv(e) {
+        if (!e) return null;
+        const url = String(e.MGU_INPUT_URL || ''), start = String(e.MGU_START_S || '0');
+        if (!/^http:\/\/127\.0\.0\.1:\d{1,5}\/[0-9a-f]{32}\/film$/.test(url) || !/^\d{1,6}$/.test(start)) { log('a film address refused'); return null; }
+        return { MGU_INPUT_URL: url, MGU_START_S: start };
+    }
 
     /* ---------- the client (internet uid) ---------- */
     let child = null, childStarts = 0, signinWait = {};
@@ -195,7 +212,7 @@ function createService(opts) {
         else if (m.ev === 'playback') st.playback = m.status;
         else if (m.ev === 'categories') cats = { at: m.at, categories: m.categories || [] };
         else if (m.ev === 'answer' && asks[m.id]) { asks[m.id](m); delete asks[m.id]; }
-        else if (m.ev === 'player-start') player.start(m.id);
+        else if (m.ev === 'player-start') player.start(m.id, filmEnv(m.env));
         else if (m.ev === 'player-ctl') player.ctl(m.id, m.line);
         else if (m.ev === 'player-stop') player.stop(m.id);
         else if (m.ev === 'signed-out') st.client = { state: 'signed-out' };
@@ -346,6 +363,22 @@ function createService(opts) {
             return epg(String(m.id || ''));
         } else if (cmd === 'logo') {
             return logo(String(m.id || ''), m.icon);
+        } else if (cmd === 'film-cats' || cmd === 'series-cats') {
+            return ask(cmd, {}, 60000).then((categories) => ({ categories }), (e) => ({ categories: [], error: e.message }));
+        } else if (cmd === 'films' || cmd === 'series') {
+            const cat = String(m.cat || '');
+            return ask(cmd, { cat }, 120000).then((list) => ({ cat, [cmd]: list }), (e) => ({ cat, [cmd]: [], error: e.message }));
+        } else if ((cmd === 'film-info' || cmd === 'series-info') && isId(m.id)) {
+            return ask(cmd, { vid: String(m.id) }, 30000).then((info) => ({ id: String(m.id), info }), (e) => ({ id: String(m.id), error: e.message }));
+        } else if (cmd === 'film-play' && isId(m.id)) {
+            const f = { kind: m.kind === 'series' ? 'series' : 'movie', id: Number(m.id), ext: /^[a-z0-9]{2,5}$/i.test(String(m.ext || '')) ? String(m.ext) : 'mp4',
+                name: String(m.name || '?').slice(0, 120), start: Math.max(0, Number(m.start) || 0), duration: Number(m.duration) || null };
+            log('film ' + f.kind + ' ' + f.id + ' ' + f.name);
+            toChild({ op: 'film-play', film: f });
+        } else if (cmd === 'film-seek') {
+            toChild({ op: 'film-seek', pos: Math.max(0, Number(m.pos) || 0) });
+        } else if (cmd === 'film-pause' || cmd === 'film-resume') {
+            toChild({ op: cmd });
         } else if (cmd === 'play' && isId(m.id)) {
             const ch = { uuid: String(m.id), name: String(m.name || '?').slice(0, 80), number: null };
             log('play ' + ch.uuid + ' ' + ch.name);

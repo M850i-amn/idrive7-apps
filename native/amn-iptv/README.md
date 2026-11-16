@@ -34,9 +34,21 @@ list 30 minutes; what is on now is asked only for the channels on screen.
 
 One JSON object per line on `/run/amn-iptv.sock`, one line back: see the header of `service.js`.
 
+## Films and series (0.2.0)
+
+`film.js`, in the client: the account's films (VOD) and series, their categories, details, seasons and episodes
+(`xtream.js`), and one playing at a time beside live TV. tvh-player reads the film itself over HTTP from a server
+`film.js` keeps on 127.0.0.1: a random port and a random 128-bit path per film, answering only that path, which fetches
+the bytes the player asks for (its Range) from the account. The service hands the player only that address and a
+start (`MGU_INPUT_URL`, `MGU_START_S`, checked in `service.js`). A skip or a resume is a new player at that second;
+pause ends the player and keeps the position; a player that ends early (the connection) is started again where it
+was, 3 times in 2 minutes. The app keeps where each film and episode stopped.
+
 ## What plays
 
-`tvh-player` takes H.264 video with AAC, AC-3 or E-AC-3 sound. Channels in HEVC (H.265, usually labelled 4K, UHD
+`tvh-player` takes H.264 video with AAC, AC-3, E-AC-3, MP2 or MP3 sound; live TV as MPEG-TS, films as MP4, MKV or
+MPEG-TS. It is built from `../tvh-player` by `.github/workflows/tvh-player.yml` (GitHub Actions), which also plays
+test films and a live stream with it; the binary here is that run's artifact, its sha256 in the commit that added it. Channels in HEVC (H.265, usually labelled 4K, UHD
 or HEVC) do not play; the service flags them (`hevc: true`) so the app can hide them. An account that allows one
 connection plays on one device at a time: a stream the provider refuses (401, 403, 509) says so.
 
