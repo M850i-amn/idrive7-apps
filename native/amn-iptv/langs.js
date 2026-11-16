@@ -7,6 +7,8 @@
  *
  *   langOf(name)        'en' | 'fr' | 'ar' | 'other' | null (nothing recognised)
  *   kept(name, set)     set: 'efa' (English, French, Arabic), 'ef' (English and French), 'all'
+ *   latin(name)         Arabic words of a category's name in English ("AR ✪ اجنبي رعب" -> "AR ✪ Foreign Horror"): the
+ *                       app's fonts have no Arabic, so those names were blank. Every word the owner's provider uses.
  *
  * A category with no language recognised (Kids, 4K, Sports) is kept: hiding it could hide something wanted. A code
  * at the start of the name decides first (the providers' own convention); else a language or country word anywhere.
@@ -14,16 +16,18 @@
  */
 const CODES = {
     en: ['EN', 'ENG', 'US', 'USA', 'UK', 'GB', 'CA', 'CAN', 'AU', 'AUS', 'NZ', 'IE', 'IRL'],
-    fr: ['FR', 'FRA', 'FRE', 'QC', 'QUE', 'VF', 'VFF', 'VFQ', 'VOSTFR', 'VOST'],
+    fr: ['FR', 'FRA', 'FRE', 'QC', 'QUE', 'VF', 'VFF', 'VFQ', 'VOSTFR', 'VOST', 'REU', 'HT'],   // Reunion, Haiti: French
     ar: ['AR', 'ARA', 'ARB', 'MA', 'MAR', 'DZ', 'TN', 'EG', 'SA', 'KSA', 'AE', 'UAE', 'LB', 'KW', 'QA', 'IQ', 'SY', 'JO', 'OM', 'BH', 'YE', 'LY', 'SD', 'PS', 'MENA'],
     other: ['PT', 'BR', 'IT', 'ES', 'SP', 'LA', 'LAT', 'MX', 'CL', 'CO', 'PE', 'VE', 'DE', 'GER', 'AT', 'NL', 'PL', 'TR', 'RU', 'UA', 'AL', 'XK',
         'IN', 'IND', 'PK', 'BD', 'LK', 'NP', 'IR', 'FA', 'AF', 'KR', 'KO', 'JP', 'CN', 'TW', 'HK', 'PH', 'GR', 'RO', 'BG', 'HU', 'CZ', 'SK', 'HR',
         'RS', 'BA', 'SI', 'MK', 'ME', 'YU', 'EXYU', 'SE', 'NO', 'DK', 'FI', 'IS', 'IL', 'KU', 'KUR', 'AM', 'AZ', 'GE', 'LT', 'LV', 'EE', 'VN', 'TH',
-        'ID', 'MY', 'NG', 'GH', 'KE', 'ET', 'SO'],
+        'ID', 'MY', 'NG', 'GH', 'KE', 'ET', 'SO',
+        // the owner's provider's own codes (its categories, 16 Nov 2026): SW Sweden, CH Switzerland and Chile, AS Asia, EX ex-Yugoslavia
+        'SW', 'CH', 'ARG', 'UY', 'DO', 'HN', 'SLV', 'SR', 'MT', 'CY', 'AS', 'EX', 'PER', 'AFGH']
 };
 const WORDS = {
     en: ['ENGLISH', 'ANGLAIS'],
-    fr: ['FRENCH', 'FRANCAIS', 'FRANCE', 'QUEBEC', 'QUEBECOIS'],
+    fr: ['FRENCH', 'FRANCAIS', 'FRANCE', 'QUEBEC', 'QUEBECOIS', 'WALLONIE'],
     ar: ['ARABIC', 'ARABE', 'ARAB', 'MAROC', 'MOROCCO', 'MAGHREB', 'ALGERIE', 'ALGERIA', 'TUNISIE', 'TUNISIA', 'EGYPT', 'KHALIJI'],
     other: ['PORTUGAL', 'PORTUGUESE', 'PORTUGUES', 'BRASIL', 'BRAZIL', 'ITALIA', 'ITALY', 'ITALIAN', 'ESPANA', 'SPAIN', 'SPANISH', 'LATINO',
         'LATIN', 'MEXICO', 'GERMAN', 'GERMANY', 'DEUTSCH', 'DUTCH', 'NEDERLAND', 'POLSKA', 'POLAND', 'POLISH', 'TURK', 'TURKEY', 'TURKISH',
@@ -32,12 +36,27 @@ const WORDS = {
         'JAPAN', 'JAPANESE', 'CHINA', 'CHINESE', 'FILIPINO', 'PINOY', 'PHILIPPINES', 'GREEK', 'GREECE', 'ROMANIA', 'ROMANIAN', 'BULGARIA',
         'HUNGARY', 'MAGYAR', 'CZECH', 'SLOVAK', 'CROATIA', 'SERBIA', 'BOSNIA', 'MACEDONIA', 'SLOVENIA', 'SWEDEN', 'SVENSKA', 'NORWAY', 'DENMARK',
         'FINLAND', 'NORDIC', 'SCANDINAVIA', 'ISRAEL', 'HEBREW', 'KURD', 'KURDISH', 'ARMENIA', 'ARMENIAN', 'VIETNAM', 'THAI', 'THAILAND',
-        'INDONESIA', 'MALAYSIA', 'AFRICA', 'AFRICAN', 'SOMALI', 'ETHIOPIA', 'NIGERIA'],
+        'INDONESIA', 'MALAYSIA', 'AFRICA', 'AFRICAN', 'SOMALI', 'ETHIOPIA', 'NIGERIA', 'VLAANDEREN'],
 };
 const BY_CODE = {}, BY_WORD = {};
 Object.keys(CODES).forEach((l) => CODES[l].forEach((c) => { BY_CODE[c] = l; }));
 Object.keys(WORDS).forEach((l) => WORDS[l].forEach((w) => { BY_WORD[w] = l; }));
 const SETS = { efa: ['en', 'fr', 'ar'], ef: ['en', 'fr'] };
+// phrases first, then words (the owner's provider's category names, 16 Nov 2026)
+const ARABIC = [['كأس العالم', 'World Cup'], ['يعرض الآن', 'Now Showing'], ['القرآن الكريم', 'Holy Quran'],
+    ['اجنبي', 'Foreign'], ['رعب', 'Horror'], ['كوميدي', 'Comedy'], ['دراما', 'Drama'], ['رومانسي', 'Romance'], ['اكشن', 'Action'],
+    ['آسيوي', 'Asian'], ['هندي', 'Indian'], ['عربي', 'Arabic'], ['مغاربي', 'Maghreb'], ['كلاسيكي', 'Classics'], ['مارفل', 'Marvel'],
+    ['مصري', 'Egyptian'], ['نتفليكس', 'Netflix'], ['فرجة', 'Forja'], ['ديزني', 'Disney'], ['هوليود', 'Hollywood'], ['انمي', 'Anime'],
+    ['أطفال', 'Kids'], ['اطفال', 'Kids'], ['مدبلج', 'Dubbed'], ['وثائقيات', 'Documentaries'], ['وثائقي', 'Documentary'],
+    ['مسرحيات', 'Plays'], ['رمضانك', 'Ramadan'], ['رمضان', 'Ramadan'], ['خليجي', 'Gulf'], ['شامي', 'Levant'], ['برامج', 'Shows'],
+    ['كرتون', 'Cartoons'], ['مسلسلات', 'Series'], ['تعرض', 'Showing'], ['تركي', 'Turkish'], ['كوري', 'Korean'], ['مترجم', 'Subtitled'],
+    ['ترفيه', 'Entertainment'], ['دينية', 'Religious'], ['افلام', 'Films'], ['أفلام', 'Films']];
+function latin(name) {
+    let s = String(name || '');
+    if (!/[\u0600-\u06ff]/.test(s)) return s;
+    ARABIC.forEach((p) => { s = s.split(p[0]).join(' ' + p[1] + ' '); });
+    return s.replace(/\s+/g, ' ').trim();
+}
 
 function tokens(name) {
     let s = String(name || '');
@@ -58,4 +77,4 @@ function kept(name, set) {
     return l === null || want.indexOf(l) >= 0;
 }
 
-module.exports = { langOf, kept, SETS };
+module.exports = { langOf, kept, latin, SETS };

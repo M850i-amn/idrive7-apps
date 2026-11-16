@@ -85,7 +85,7 @@ async function refresh(force) {
         if (st.state !== 'connected') setState('connecting');
         if (force || !st.server || Date.now() - infoAt > INFO_MS) { st.server = await xt.info(); infoAt = Date.now(); }
         if (force || !cats.length || Date.now() - catsAt > CATS_MS) {
-            cats = (await xt.categories()).map((c) => ({ id: c.id, name: ascii(c.name) }));
+            cats = (await xt.categories()).map((c) => ({ id: c.id, name: ascii(LANGS.latin(c.name)) }));
             catsAt = Date.now();
             st.categories = cats.length;
             log(cats.length + ' categories');
@@ -168,6 +168,8 @@ function rank(list, q, n) {
    MemoryLimit; 0.2.2 indexed all 207 categories of the owner's account, with a second copy for browsing, while a
    film played: the client was likely killed). So only what search shows is kept, nothing twice, and the indexing
    waits while something plays (memory and the car's internet are the film's). */
+/** a film's or a series' title for the app (ASCII: the kit's fonts); one in Arabic script would be blank */
+const titleOf = (n) => ascii(n).replace(/\s+/g, ' ').trim() || '(Arabic title)';
 const vodIndex = {};   // '<movies|series>:<langs>' -> { items: Map id -> item, done, total, at, running, error }
 const INDEX_MS = 6 * 3600000;
 const INDEX_MAX = 60000;          // entries: about 15 MiB at most
@@ -191,7 +193,7 @@ function indexOf(kind, langs) {
                     const items = await (kind === 'series' ? xt.series(c.id) : xt.films(c.id));
                     items.forEach((x) => {
                         if (ix.items.size >= INDEX_MAX) return;
-                        const name = ascii(x.name);
+                        const name = titleOf(x.name);
                         ix.items.set(x.id, { id: x.id, name, key: name.toLowerCase(), poster: x.poster, year: x.year, rating: x.rating, ext: x.ext, hevc: !!x.hevc });
                     });
                 } catch (e) { log(kind + ' index: ' + c.id + ': ' + e.message); }
@@ -246,11 +248,11 @@ function answer(m) {
     if (m.what === 'epg') return reply(guide(String(m.sid || '')));
     if (m.what === 'logo') return reply(xt.logo(m.icon).then((b) => b.toString('base64')));
     // films and series: names, plots and titles in ASCII (the kit's fonts), lists kept 10 minutes
-    const A = (x) => Object.assign({}, x, x.name != null ? { name: ascii(x.name) } : {}, x.title != null ? { title: ascii(x.title) } : {},
+    const A = (x) => Object.assign({}, x, x.name != null ? { name: titleOf(x.name) } : {}, x.title != null ? { title: ascii(x.title) } : {},
         x.plot != null ? { plot: ascii(x.plot) } : {}, x.genre != null ? { genre: ascii(x.genre) } : {});
     const kept = (key, fn) => { const k = vodKept.get(key); if (k && Date.now() - k.at < 600000) return Promise.resolve(k.v);
         return fn().then((v) => { vodKept.set(key, { at: Date.now(), v }); if (vodKept.size > 200) vodKept.clear(); return v; }); };
-    const cats = (l) => l.map((c) => ({ id: c.id, name: ascii(c.name) }));
+    const cats = (l) => l.map((c) => ({ id: c.id, name: ascii(LANGS.latin(c.name)) }));
     if (m.what === 'vod-search') return reply(vodSearch(String(m.kind || ''), String(m.q || ''), String(m.langs || 'all')));
     if (m.what === 'film-cats') return reply(kept('fc', () => xt.filmCategories().then(cats)));
     if (m.what === 'films') return reply(kept('f:' + m.cat, () => xt.films(String(m.cat || '')).then((l) => l.map(A))));
