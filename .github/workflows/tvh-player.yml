@@ -1,0 +1,33 @@
+# Builds native/tvh-player (the IPTV service's player) from source with its own build.sh: FFmpeg at a pinned
+# commit, in ubuntu:18.04 (the head unit's glibc), with the loader, glibc and start checks build.sh makes.
+# The binary and its sha256 are uploaded as an artifact; nothing is committed from here (read-only token): the
+# binary goes into native/amn-iptv by a commit that names this run.
+name: tvh-player
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['native/tvh-player/**', '.github/workflows/tvh-player.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: sh native/tvh-player/build.sh
+      - name: Fingerprint
+        run: |
+          cd native/tvh-player/build
+          sha256sum tvh-player | tee tvh-player.sha256
+          echo "commit ${GITHUB_SHA}, run ${GITHUB_RUN_ID}" >> tvh-player.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tvh-player
+          path: |
+            native/tvh-player/build/tvh-player
+            native/tvh-player/build/tvh-player.sha256
+            native/tvh-player/build/FFMPEG-LICENSE
+          retention-days: 30
