@@ -18,6 +18,7 @@
  *   fv.video(id, file)        names the player's frame file on this connection (once it exists)
  *   o.onTouch(phase, x, y)    raw touch (true: the gesture is taken, a drag), else a tap goes to the targets
  *   o.onCcu()                 the controller was pressed or pushed
+ *   fv.touch(phase, x, y)     a touch in this view's logical px that came on another connection (the page's)
  *
  * Node 8.
  */
@@ -41,7 +42,7 @@ function createFullView(o) {
     gpu.on('close', () => { ready = false; });
     // touched outside the claim (it covers the screen, so: the renderer took the layer away)
     gpu.on('closed', () => { if (shown) log.info('fullview: hidden by the renderer'); shown = false; gpu.grab(false); });
-    gpu.on('touch', (phase, x, y) => {
+    function touch(phase, x, y) {
         if (!shown) return;
         let took = false;
         try { took = o.onTouch && o.onTouch(phase, x, y) === true; } catch (e) { log.warn('fullview touch: ' + e.message); }
@@ -52,7 +53,8 @@ function createFullView(o) {
             const t = down; down = null;
             if (t && inside(t)) { try { t.run(); } catch (e) { log.warn('fullview tap ' + t.key + ': ' + e.message); } }
         }
-    });
+    }
+    gpu.on('touch', touch);
     gpu.on('ccu', (c) => {
         const k = c.frontRotaryEncoderPushButton + ':' + c.frontRotaryEncoderDeflection;
         if (lastCcu !== null && k !== lastCcu && (c.frontRotaryEncoderPushButton || c.frontRotaryEncoderDeflection) && o.onCcu) o.onCcu();
@@ -69,7 +71,10 @@ function createFullView(o) {
         else { gpu.grab(false); gpu.claim([]); gpu.show(false); down = null; }
     }
     return {
-        H,
+        H, scale,
+        // a touch the page's connection got (mgu-render gives a gesture to the first connection whose claim holds it,
+        // and the kit's page claims its box): in this view's logical px
+        touch,
         update(w) { want = !!w; apply(want && ready); },
         shown: () => shown,
         // the player's frame file, named on this connection too (renderd.js names it again after a reconnect)

@@ -41,7 +41,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.7';
+const VERSION = '0.1.8';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -280,7 +280,15 @@ mgu.run({
                 drag = null;
                 return took;
             });
-            if (typeof ctx.onTouch === 'function') ctx.onTouch(onDrag);
+            // over the full view, the kit's page (claimed first, under it) gets the touches: they go to the full view,
+            // from the page's logical px to the screen's (as mgu-render places it) and on to the view's
+            if (typeof ctx.onTouch === 'function') ctx.onTouch(guard('touch', (phase, x, y) => {
+                const pl = ctx.display && ctx.display.place;
+                if (!fv.shown() || !pl) return onDrag(phase, x, y);
+                const sx = (pl.x || 0) + (pl.ox || 0) + x * pl.scale, sy = (pl.y || 0) + (pl.oy || 0) + y * pl.scale;
+                fv.touch(phase, sx / fv.scale, sy / fv.scale);
+                return true;
+            }));
             const tap = (fn) => () => { if (Date.now() - dragged < 250) return; fn(); };
             // on the full view (lib/fullview.js) the targets are its own; on the page, the kit's
             const btn = (cv, key, x, y, w, h, fn, r) => cv.fv ? (cv.fv.push({ key, x: x - 4, y: y - 4, w: w + 8, h: h + 8, run: guard(key, tap(fn)) }), cv)
@@ -753,7 +761,7 @@ mgu.run({
                 fv.update(fvWanted());
                 if (page === 'player' && fv.shown()) {
                     cv.fillRect(0, 0, W, fullH, '#000000');
-                    fv.draw((rec, FH) => drawPlayer(rec, { x: 40, y: 24, right: W - 40, bottom: FH - 20, w: W - 80, h: FH - 44, own: true }, FH));
+                    fv.draw((rec, FH) => drawPlayer(rec, { x: 96, y: 24, right: W - 40, bottom: FH - 20, w: W - 136, h: FH - 44, own: true }, FH));
                 } else if (page === 'player') drawPlayer(cv, A, fullH);
                 else {
                     rail(cv, A);
