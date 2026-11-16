@@ -18,6 +18,8 @@
 const { Canvas, rgba } = require('./kit/canvas');
 const { loadClient } = require('./kit/cluster_render');
 const Car = require('./kit/car');
+// 0.6.0: the gearbox oil temperature, Redline's own reader (EGS over read-only UDS, else BasicDataSet)
+const GearboxTemp = require('./gearbox');
 
 /* ---------- Redline's kit canvas: fill() / fillPolys() / stroke(), for the Ramp's rail and band ---------- */
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -88,7 +90,10 @@ const PLACE = { x: 200, y: 140 };                 // Redline's tach at 100 % in 
 const FPS = 20, BLINK_MS = 100, RECONNECT_MS = 8000, LOAD_RETRY_MS = 30000, MODE_HOLD_MS = 600;
 const SPAN = 1500;                                // the lights count in over this many rpm before the shift point
 const isNum = (x) => typeof x === 'number' && isFinite(x);
-const TEMPS = [['OIL', 'oil', { cold: 60, hot: 130 }], ['WATER', 'coolant', { cold: 60, hot: 112 }]];
+// as Redline's readoutsFor: the bands in deg C; oil under "Oil warm at" reads warm (yellow)
+const TEMPS = [['OIL', 'oil', 'sportOil', { cold: 60, hot: 130, warmOil: true }], ['GEARBOX', 'gearbox', 'sportGearbox', { cold: 50, hot: 120 }],
+    ['WATER', 'coolant', 'sportWater', { cold: 60, hot: 112 }]];
+const COLD_LIMIT = 4500;                          // Redline's petrol cold limit: the shift point with the oil at 30 deg C
 const asBuffer = (u8) => Buffer.from(u8.buffer, u8.byteOffset, u8.length);
 
 /** The drive mode's wire number (name, number or number as text) -> 'sport' | 'other' | null (unknown, initialising). */
@@ -133,6 +138,12 @@ class SportHud {
     constructor(o) {
         this.ctx = o.ctx; this.log = o.ctx.log; this.app = o.app; this.settings = o.settings;
         // a fault in the car signals leaves the tach without data, never the app down (two crashes uninstall an app)
+        this.gearbox = null;
+        try {
+            this.gearbox = new GearboxTemp(o.ctx);
+            const gh = this.gearbox.handlers();
+            if (o.ctx.signals && o.ctx.signals.watch) Object.keys(gh).forEach((iface) => o.ctx.signals.watch(iface, '1', gh[iface], this.log).catch(() => {}));
+        } catch (e) { this.gearbox = null; this.log.warn('sport hud: gearbox ' + (e && e.message)); }
         try { this.car = new Car(o.ctx, ['rpm', 'temps', 'gear', 'program'], { demo: false }); }
         catch (e) { this.car = { data: () => ({}) }; this.log.warn('sport hud: car signals ' + (e && e.message)); }
         this.mode = null; this.modeAt = 0; this.rawMode = undefined;
@@ -163,6 +174,18 @@ class SportHud {
     }
     redline() { const r = Number(this.settings.get('redlineRpm')); return r > 3000 ? r : 6500; }
     shiftAt() { const s = Number(this.settings.get('shiftRpm')); return s > 2000 ? Math.min(s, this.redline() - 100) : this.redline() - 300; }
+    /** Redline's shiftPoint(): the shift point lowered while the oil is cold -> { rpm, cold }. */
+    shiftPoint(oil) {
+        const n = this.shiftAt(), warm = Number(this.settings.get('warmOil')) || 80;
+        if (this.settings.get('coldGuard') === false || !isNum(oil) || oil >= warm) return { rpm: n, cold: false };
+        const cold = Math.min(COLD_LIMIT, n), f = Math.max(0, Math.min(1, (oil - 30) / (warm - 30)));
+        return { rpm: Math.round((cold + (n - cold) * f) / 50) * 50, cold: true };
+    }
+    /** The readouts' values now, for the centre screen: 'OIL 95°  GEARBOX 70°  WATER 90°  LIMIT 5200'. */
+    readings() {
+        const f = this._frameData(Date.now());
+        return (f.readouts || []).map((it) => it.label + ' ' + it.value).join('   ') || 'no readings from the car yet';
+    }
     max() { return Math.ceil((this.redline() + 800) / 1000) * 1000; }
     /** Redline's paused(): BMW has the HUD (its own content, or the mapping guard). */
     paused() { return this.tDisabled || this.tState === 'parked' || this.tState === 'waiting' || this.tState === 'unavailable'; }
@@ -184,6 +207,7 @@ class SportHud {
     /** Called often by main.js: starts / stops the layer and draws. Returns wants(). */
     tick() {
         const on = this.wants();
+        if (this.gearbox) { try { if (on && this.settings.get('sportGearbox') !== false) this.gearbox.start(); else this.gearbox.stop(); } catch (e) { /* the reader logs */ } }
         if (!on) { if (this.cr) this.close(); return false; }
         if (!this.cr) this._connect();
         if (!this.timer && this.cr) this.timer = setInterval(() => { try { this._frame(); } catch (e) { this.log.warn('sport hud: frame ' + (e && e.stack || e)); } }, Math.round(1000 / FPS));
@@ -230,15 +254,22 @@ class SportHud {
             d = { rpm: 1800 + k * (this.redline() - 1600), gear: g, stage: 'D' };
             oil = 104; coolant = 92;
         }
-        const redline = this.redline(), at = this.shiftAt(), rpm = d.rpm;
+        const redline = this.redline(), sp = this.shiftPoint(oil), at = sp.rpm, rpm = d.rpm;
         const cue = { from: at - SPAN, at: at, shift: isNum(rpm) && rpm >= at, limiter: isNum(rpm) && rpm >= redline - 40, rate: 0, fallSince: null };
         const blink = cue.shift || cue.limiter ? Math.floor(now / BLINK_MS) % 2 === 0 : true;
-        const items = [];
-        const temps = { oil: oil, coolant: coolant };
+        // Redline's order: the cold-engine limit first (while the oil is cold), then oil, gearbox, water. The Ramp shows the
+        // first under the gear and three more on the right
+        const items = [], warm = Number(this.settings.get('warmOil')) || 80;
+        if (sp.cold && this.settings.get('sportLimit') !== false) items.push({ label: 'LIMIT', value: String(sp.rpm), tone: 'cold' });
+        let gb = null;
+        try { gb = now < this.test ? 78 : this.gearbox ? this.gearbox.value() : null; } catch (e) { gb = null; }
+        const temps = { oil: oil, coolant: coolant, gearbox: gb };
         TEMPS.forEach((t) => {
+            if (this.settings.get(t[2]) === false) return;
             const v = temps[t[1]];
             if (!isNum(v)) return;
-            const tone = v < t[2].cold ? 'cold' : v > t[2].hot ? 'hot' : 'text';
+            const lim = t[3];
+            const tone = v < lim.cold ? 'cold' : lim.warmOil && v < warm ? 'warm' : v > lim.hot ? 'hot' : 'text';
             items.push({ label: t[0], value: Math.round(v) + '°', tone: tone });
         });
         const prog = d0.program;
@@ -284,6 +315,7 @@ class SportHud {
 
     close() {
         if (this.timer) { clearInterval(this.timer); this.timer = null; }
+        if (this.gearbox) { try { this.gearbox.stop(); } catch (e) { /* stopping */ } }
         if (this.cr) { try { if (this.ref) this.cr.drop(this.ref); } catch (e) { /* gone */ } try { this.cr.close(); } catch (e) { /* closing */ } }
         this.cr = null; this.ready = false; this.ref = 0; this.first = true; this.tState = '';
     }

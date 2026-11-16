@@ -91,6 +91,12 @@ the gear big and squared with D / S / M beside it; oil under the gear and water 
 when hot). In **Comfort, Eco Pro and Adaptive** the lyrics come back. Nothing else of Redline comes with it: no shift
 learning, scoring or logs, and Redline need not be installed.
 
+Readouts (0.6.0), each on or off in Settings: **oil**, **gearbox** (from the gearbox unit with read-only diagnostic
+requests, as Redline reads it; else BasicDataSet) and **water** temperatures, and the **cold-engine rev limit**: while
+the oil is under **Oil warm at** (80 °C), the shift point is pulled down (4,500 rpm at 30 °C, rising to your shift point
+as the oil warms; **Lower the shift lights while the oil is cold**), the lights flash there, and LIMIT shows under the
+gear. The centre screen's Sport HUD panel lists the values the car sends.
+
 Settings: **Sport mode: rev tach on the HUD** (on by default), **Shift lights flash at** (6,200 rpm by default; the
 lights count in over the 1,500 rpm before it) and **Redline** (6,500 rpm, where the limiter flash starts and the
 scale ends a little after). **Test Sport HUD** on the main screen plays an 8-second rev sweep on the HUD, parked.
