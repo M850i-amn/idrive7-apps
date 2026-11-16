@@ -12,5 +12,8 @@
       "sdk": "oap-sdk",
       "output": "dist/{id}@{version}.tgz"
     }
-  }
+  },
+  "components": [
+    { "id": "amn-iptv", "kind": "tool", "path": "native/amn-iptv" }
+  ]
 }

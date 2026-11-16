@@ -14,4 +14,14 @@ This repository builds on, and keeps the licences of:
 Changes to the kit: the encrypted crash-log uploader (`remotelog.js`, `ringlog.js`, `x25519.js`) is removed,
 and `kit/runtime/mgu.js` no longer loads it. The unused `gif_drop.js` (phone-to-car GIFs through ntfy.sh) is removed.
 
+IPTV (`apps/amn_iptv`, `native/amn-iptv`, `native/tvh-player`):
+
+- **aurelmarius/bmw-apps** (commit 921832956f301c0b889c0643a768f05c2b0216df): the TVH Player service and its player
+  tvh-player, **GPL-3.0-or-later** (`native/amn-iptv/LICENSE`, `native/tvh-player/LICENSE`). The service is changed for
+  Xtream Codes; the player binary is unchanged, its source in `native/tvh-player`. FFmpeg: LGPL-2.1-or-later
+  (`native/amn-iptv/FFMPEG-LICENSE`). Its decoder builds on Robert Nisipeanu's waze-on-cluster via Moonride (GPL-3.0-or-later).
+- **leschi/mgu-media-client** (MIT): park check, on-screen keyboard, PNG decoder (changed to keep transparency).
+- jpeg-js (BSD-3-Clause), pdf.js decoder core (Apache-2.0), Project Nayuki QR code generator (MIT), Inter (OFL):
+  `apps/amn_iptv/LICENSE.third-party`.
+
 No BMW code or SDK is in this repository. `oap-sdk/` and `dist/` are never committed.

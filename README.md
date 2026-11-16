@@ -5,6 +5,7 @@ Apps for BMW head units with **iDrive 7** (MGU), installed from the car through
 
 | App | What it does |
 |---|---|
+| [IPTV](apps/amn_iptv/README.md) | Your own Xtream Codes IPTV account's live channels on the centre screen, UHF-style: favourites, TV guide, categories, search, full-screen player. Needs the **IPTV service** (same source). Your login stays on your car. |
 | [HUD Lyrics](apps/amn_hudlyrics/README.md) | Synced lyrics for the song playing over CarPlay, one line at a time in the head-up display (experimental, off until switched on), and a Now Playing page on the centre screen. |
 
 ## Install
@@ -17,8 +18,13 @@ Needs root access, mgu-store, the Store's **Cluster renderer** tool for the HUD,
 
 ## Safety
 
+HUD Lyrics: 
 Read-only toward the car: it subscribes to and reads signals, and never writes, codes, clears or controls
 anything. One internet host: `lrclib.net`. No accounts, analytics or crash-report uploads.
+
+IPTV: talks only to the IPTV provider you sign in to, through the IPTV service. The service runs as root (it plays video and opens
+the sign-in page on the car Wi-Fi for 10 minutes); its internet goes through mgu-uplink as its own uid. The app calls the
+audio manager to put the TV sound on the speakers, and nothing else in the car.
 
 ## Credits
 
