@@ -39,7 +39,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -561,9 +561,17 @@ mgu.run({
                     if (sub) cv.text(fit(cv, sub, 19, W - 200, M), W / 2, mid + 30, 19, C.grey, Object.assign({ align: 'center' }, M));
                 }
                 const show = msg || Date.now() < overlayUntil || panel;
-                // a tap anywhere shows the controls (or hides them)
-                btn(cv, 'pic', 0, A.y, W, fullH - A.y, () => { if (Date.now() < overlayUntil && !panel) overlayUntil = 0; else overlayUntil = Date.now() + 6000; panel = null; }, 0);
-                if (!show || !ch) return;
+                // why there is no sound, said over the picture: the player's, the speakers' (lib/car_audio.js)
+                const snd = soundProblem(pb);
+                if (snd && !msg) {
+                    const sw = cv.textWidth(fit(cv, snd, 19, W - 400, M), 19, M) + 52;
+                    cv.roundRect((W - sw) / 2, A.y + 6, sw, 42, 21, A_('#000000', 0.7));
+                    cv.text(fit(cv, snd, 19, W - 400, M), W / 2, A.y + 34, 19, C.amber, Object.assign({ align: 'center' }, M));
+                }
+                // a tap anywhere else shows the controls (or hides them): drawn last, since the kit gives a tap to the
+                // first target under the finger and this one, drawn first, took every tap (the back arrow, the actions)
+                const picBtn = () => btn(cv, 'pic', 0, A.y, W, fullH - A.y, () => { if (Date.now() < overlayUntil && !panel) overlayUntil = 0; else overlayUntil = Date.now() + 6000; panel = null; }, 0);
+                if (!show || !ch) { picBtn(); return; }
                 // the top: back, LIVE
                 cv.gradientRect(0, 0, W, 140, [[0, A_('#000000', 0.6)], [1, A_('#000000', 0)]]);
                 cv.roundRect(A.x, A.y, 56, 56, 28, A_('#ffffff', 0.18));
@@ -598,6 +606,19 @@ mgu.run({
                 });
                 if (panel === 'guide') drawGuidePanel(cv, A, ch, by);
                 if (panel === 'channels') drawChannelsPanel(cv, A, by);
+                picBtn();
+            }
+            // what keeps a playing channel silent, or null
+            let silentSince = 0;
+            function soundProblem(pb) {
+                if (!pb || pb.state !== 'playing') { silentSince = 0; return null; }
+                const a = audio.state();
+                if (pb.audioError) return 'No sound: ' + pb.audioError;
+                if (a.taken) return 'No sound: another app (AirPlay, TVH Player) has the car\'s speakers';
+                if (a.error) return 'No sound: ' + a.error;
+                if (a.connected) { silentSince = 0; return null; }
+                if (!silentSince) silentSince = Date.now();
+                return Date.now() - silentSince > 6000 ? 'No sound: the speakers did not connect (car audio)' : null;
             }
             const guides = {};
             function loadGuide(id) {
