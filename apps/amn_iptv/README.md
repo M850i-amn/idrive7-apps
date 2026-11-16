@@ -1,7 +1,7 @@
 # IPTV
 
 The live TV channels of **your own Xtream Codes IPTV account** on the centre screen, in the style of UHF.
-iDrive 7 · package `amn_iptv` · version 0.1.8 · needs the **IPTV service** (`amn-iptv`, same Store source) and a GPU
+iDrive 7 · package `amn_iptv` · version 0.1.9 · needs the **IPTV service** (`amn-iptv`, same Store source) and a GPU
 renderer (mgu-render) from the Store.
 
 ## Your account stays yours

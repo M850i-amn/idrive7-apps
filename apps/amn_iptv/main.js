@@ -41,7 +41,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.8';
+const VERSION = '0.1.9';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -299,8 +299,24 @@ mgu.run({
                 onTouch: onDrag, onCcu: () => { overlayUntil = Date.now() + 6000; } });
             // the player page, the app's page shown and in front (not under Settings, not left with HOME)
             const fvWanted = () => page === 'player' && ui.isVisible('MAIN') && !ui.isVisible('SETTINGS') && (!ui.hasFocus || ui.hasFocus('MAIN'));
-            ui.onVisible(guard('fullview', () => fv.update(fvWanted())));
-            setInterval(guard('fullview', () => fv.update(fvWanted())), 500);
+            // while the full view is up the page's own layer is hidden: mgu-render puts a layer on top when its connection
+            // makes it, and the page's reconnects (the kit app sent back and forth) put it back over the picture, black,
+            // with the kit's header; hidden, it also claims no touch. The kit shows it again on its own events only, so
+            // it is shown again here once the full view goes
+            let pageHidden = false;
+            function syncFull() {
+                fv.update(fvWanted());
+                const g = ctx.display && ctx.display.gpu;
+                if (!g) return;
+                const hide = fv.shown();
+                if (hide && g.visible) { g.show(false); pageHidden = true; }
+                else if (!hide && pageHidden) {
+                    pageHidden = false;
+                    if (typeof ctx.display._syncVisible === 'function') ctx.display._syncVisible(); else g.show(true);
+                }
+            }
+            ui.onVisible(guard('fullview', syncFull));
+            setInterval(guard('fullview', syncFull), 500);
 
             /* ---------- drawing pieces ---------- */
             function glass(cv, x, y, w, h, r, fill) { cv.roundRect(x, y, w, h, r, fill || C.card); }
@@ -757,10 +773,11 @@ mgu.run({
                 const cv = ctx.canvas(W, H), A = FS.area(cv), fullH = H + (cv.extra || 0);
                 if (cv.chrome) G.frame(cv, ctx.theme(), ['IPTV'], 0, []);
                 regions.length = 0;
-                cv.fillRect(0, 0, W, fullH, C.bg);
-                fv.update(fvWanted());
+                syncFull();
+                // under the full view the page draws nothing: its layer stays clear, so the full view shows whichever of
+                // the two the renderer puts in front (the newest shown is; on the car the page came back over it, black)
+                if (!(page === 'player' && fv.shown())) cv.fillRect(0, 0, W, fullH, C.bg);
                 if (page === 'player' && fv.shown()) {
-                    cv.fillRect(0, 0, W, fullH, '#000000');
                     fv.draw((rec, FH) => drawPlayer(rec, { x: 96, y: 24, right: W - 40, bottom: FH - 20, w: W - 136, h: FH - 44, own: true }, FH));
                 } else if (page === 'player') drawPlayer(cv, A, fullH);
                 else {
