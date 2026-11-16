@@ -81,3 +81,15 @@ The HUD, one line (default), two lines and three lines, over a mock windshield. 
 ![HUD, two lines](../../docs/screenshots/amn_hudlyrics/hud-two-lines-medium.png)
 
 ![HUD, three lines](../../docs/screenshots/amn_hudlyrics/hud-three-lines-medium.png)
+
+## Sport mode: Redline's rev bar instead of the lyrics (0.4.0)
+
+With **Redline** installed (from the Store) and its HUD on, the HUD follows the drive mode:
+
+- **Sport:** Redline's rev bar, gear and readouts. The lyrics step aside.
+- **Comfort, Eco Pro, Adaptive:** the lyrics.
+
+Redline shows its HUD in Sport only by default (its setting "In Comfort / Eco Pro: Don't show"). While it draws,
+it holds the HUD (a claim in `/dev/shm/mgu-hud`, the kit's `hud_claim.js`); HUD Lyrics reads that claim every
+second and gives way, then comes back when Redline lets go. Choose Redline's look in Redline's own settings.
+To keep the lyrics in every mode, switch off **Give the HUD to Redline while it shows (Sport)**.

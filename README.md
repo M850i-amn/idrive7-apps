@@ -6,7 +6,7 @@ Apps for BMW head units with **iDrive 7** (MGU), installed from the car through
 | App | What it does |
 |---|---|
 | [IPTV](apps/amn_iptv/README.md) | Your own Xtream Codes IPTV account's live channels on the centre screen, UHF-style: favourites, TV guide, categories, search, full-screen player. Needs the **IPTV service** (same source). Your login stays on your car. |
-| [HUD Lyrics](apps/amn_hudlyrics/README.md) | Synced lyrics for the song playing over CarPlay, one line at a time in the head-up display (experimental, off until switched on), and a Now Playing page on the centre screen. |
+| [HUD Lyrics](apps/amn_hudlyrics/README.md) | Synced lyrics for the song playing over CarPlay, one line at a time in the head-up display (experimental, off until switched on), and a Now Playing page on the centre screen. With Redline's HUD on, Sport shows Redline's rev bar instead, the other modes the lyrics. |
 
 ## Install
 
