@@ -21,12 +21,15 @@ const path = require('path');
 const mgu = require('./kit/mgu');
 const { Canvas } = require('./kit/canvas');
 const { Turn, CAPTURE_MS } = require('./turn');
+// 0.2.0: the turn signals straight from the light module (de.bmw.body.Light); the taught light status is the fallback
+const { Indicators } = require('./indicators');
 const { SidePanel, PW, PH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 
-const VERSION = '0.1.1';
+const VERSION = '0.2.0';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
+const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
 const POLL_MS = 300;              // the light status re-read this often (the car may not notify each flash)
 const TICK_MS = 100;              // the side decided this often
 
@@ -89,6 +92,11 @@ mgu.run({
             let saved = null;
             try { saved = JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch (e) { /* first start */ }
             const T = new Turn(saved);
+            const D = new Indicators();
+            const ready = () => D.live() || T.ready();
+            const sideNow = (now) => (D.live() ? D.side(now, holdMs()) : T.ready() ? T.side(now, holdMs()) : null);
+            const litNow = (s, now) => (D.live() ? D.lit(s) : T.lit(s, now));
+            const hazards = (now) => (D.live() ? D.state === 'hazard' : T.lit('left', now) && T.lit('right', now));
             const save = () => {
                 try { const tmp = FILE + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(T.learned(), null, 1)); fs.renameSync(tmp, FILE); }
                 catch (e) { log.warn('save: ' + e.message); }
@@ -111,6 +119,21 @@ mgu.run({
                     .catch((e) => { light.state = 'error'; light.err = e.message; log.warn('light status: ' + e.message); });
             } else light.state = 'error';
 
+            /* ---------- 0.2.0: the light module's turn-signal status ---------- */
+            if (ctx.signals && ctx.signals.watch) {
+                const h = {};
+                let logged = 0;
+                BODY_LIGHT[2].forEach((f) => {
+                    h[f] = guard(f, (v) => {
+                        const was = D.state, st = D.feed(v, Date.now());
+                        if (st !== was || logged < 3) { logged++; log.info('indicators (' + f + '): ' + JSON.stringify(v) + ' -> ' + st); }
+                    });
+                });
+                ctx.signals.watch(BODY_LIGHT[0], BODY_LIGHT[1], h, log)
+                    .then((s2) => { D.err = s2.error || null; log.info('indicators: ' + (s2.error ? 'error: ' + s2.error : 'subscribed')); })
+                    .catch((e) => { D.err = e.message; log.warn('indicators: ' + e.message); });
+            }
+
             /* ---------- the cluster ---------- */
             const panel = new SidePanel({ log: log, app: 'amn_sideview', draw: panelImage });
             const holdMs = () => Number(settings.get('hold')) || 1500;
@@ -123,7 +146,7 @@ mgu.run({
                     log.info('learn ' + done.which + ': ' + done.text + ' ' + JSON.stringify(T.learned().marks));
                     save();
                 }
-                let side = settings.get('cluster') && T.ready() ? T.side(now, holdMs()) : null;
+                let side = settings.get('cluster') && ready() ? sideNow(now) : null;
                 if (test && now < test.until) side = test.side; else test = null;
                 if (side !== lastSide) { log.info('side: ' + (side || 'none')); lastSide = side; }
                 panel.show(side);
@@ -174,19 +197,29 @@ mgu.run({
                 cv.roundRect(cx - bw / 2 + 16, cy + bh / 2 - 62, bw - 32, 34, 12, '#0e131c');      // rear window
                 cv.roundRect(cx - bw / 2 - 18, cy - bh / 2 + 64, 20, 12, 5, '#2a3140');            // mirrors
                 cv.roundRect(cx + bw / 2 - 2, cy - bh / 2 + 64, 20, 12, 5, '#2a3140');
-                const side = T.ready() ? T.side(now, holdMs()) : null;
+                const side = ready() ? sideNow(now) : null;
                 ['left', 'right'].forEach((s) => {
-                    const dir = s === 'left' ? -1 : 1, on = T.lit(s, now), held = side === s;
+                    const dir = s === 'left' ? -1 : 1, on = litNow(s, now), held = side === s;
                     arrow(cv, cx + dir * 150, cy, 74, dir, on ? C.accent : held ? A(C.accent, 0.35) : A('#ffffff', 0.1));
                 });
-                const word = !T.ready() ? 'Teach the signals first' : side ? (side === 'left' ? 'Left' : 'Right') + ' on the cluster' :
-                    T.lit('left', now) && T.lit('right', now) ? 'Hazards - nothing shown' : 'No signal';
+                const word = !ready() ? 'Waiting for the turn signals' : side ? (side === 'left' ? 'Left' : 'Right') + ' on the cluster' :
+                    hazards(now) ? 'Hazards - nothing shown' : 'No signal';
                 cv.text(word, cx, y + h - 34, 22, side ? C.text : C.dim, Object.assign({ align: 'center' }, M));
             }
             /** Teaching: three steps, each with its state. */
             function teachCard(cv, now) {
                 const x = 600, y = 36, w = W - 48 - x, h = 372, ix = x + 36, iw = w - 72;
                 glass(cv, x, y, w, h, 28);
+                if (D.live()) {
+                    // 0.2.0: the car says which side: nothing to teach
+                    cv.text('TURN SIGNALS  ·  FROM THE CAR', ix, y + 52, 14, C.accent, Object.assign({ spacing: 2.2 }, B));
+                    const now2 = { left: 'LEFT', right: 'RIGHT', hazard: 'HAZARDS', off: 'OFF', other: 'OFF (another flash)' }[D.state] || '-';
+                    cv.text(now2, ix, y + 140, 64, D.state === 'left' || D.state === 'right' ? C.accent : C.text, B);
+                    wrap(cv, 'The light module reports the turn signals, so there is nothing to teach. Left shows the left side on the cluster, right the right side; hazards show nothing.', 20, iw, 3, M)
+                        .forEach((r, k) => cv.text(r, ix, y + 200 + k * 28, 20, C.dim, M));
+                    cv.text(fit(cv, 'Light module: ' + JSON.stringify(D.raw), 14, iw, M), ix, y + h - 14, 14, C.faint, M);
+                    return;
+                }
                 cv.text('TEACH THE TURN SIGNALS  ·  ONCE, PARKED', ix, y + 52, 14, C.accent, Object.assign({ spacing: 2.2 }, B));
                 const cap = T.capturing(now);
                 const steps = [
@@ -233,7 +266,8 @@ mgu.run({
                 const items = [
                     ['LIGHT STATUS', light.state === 'on' ? 'green' : light.state === 'error' ? 'red' : 'amber',
                         light.state === 'on' ? 'From the car  ·  ' + light.n : light.state === 'error' ? 'Not available' + (light.err ? ': ' + light.err : '') : 'Connecting'],
-                    ['TURN SIGNALS', T.ready() ? 'green' : T.base ? 'amber' : 'grey', T.ready() ? 'Learned' : T.base ? 'Half learned' : 'Not learned yet'],
+                    D.live() ? ['TURN SIGNALS', 'green', 'From the car  ·  ' + D.n] :
+                        ['TURN SIGNALS', T.ready() ? 'green' : T.base ? 'amber' : 'grey', T.ready() ? 'Learned' : T.base ? 'Half learned' : D.err ? 'Light module: ' + D.err : 'Signal once to start'],
                     ['CLUSTER', !settings.get('cluster') ? 'grey' : ({ on: 'green', wait: 'amber', off: 'grey', error: 'red' })[pv.kind] || 'grey', settings.get('cluster') ? pv.text : 'Off in Settings'],
                     ['CAMERA', 'grey', 'Not connected yet  ·  ' + VERSION],
                 ];
