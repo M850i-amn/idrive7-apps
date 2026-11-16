@@ -34,12 +34,14 @@ const pack = require('./kit/pack');
 const svc = require('./svc');
 const park = require('./parkgate');
 const { createCarAudio } = require('./car_audio');
+const { createFullView } = require('./fullview');
+const { RenderClient } = require('./kit/renderd');
 const WHEEL = require('./wheel');
 const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -247,6 +249,7 @@ mgu.run({
                 const g = ctx.display && ctx.display.gpu;
                 if (!g || !g.ready || !g.native || !g.info || !g.info.video) return false;
                 if (!videoNamed && !fs.existsSync(VIDEO_FILE)) return false;
+                if (!videoNamed) fv.video(VID, VIDEO_FILE);
                 if (!videoNamed) { videoNamed = g.video(VID, VIDEO_FILE) !== false; if (videoNamed) log.info('video: ' + VIDEO_FILE + ' named to the renderer'); }
                 return videoNamed;
             }
@@ -254,7 +257,7 @@ mgu.run({
             /* ---------- scrolling (a finger dragged on a list) ---------- */
             let drag = null, dragged = 0;
             const regions = [];          // drawn each frame: { key, x, y, w, h, max (px) }
-            if (typeof ctx.onTouch === 'function') ctx.onTouch(guard('touch', (phase, x, y) => {
+            const onDrag = guard('touch', (phase, x, y) => {
                 if (phase === 1) {
                     const r = regions.filter((g) => x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h)[0];
                     drag = r ? { key: r.key, y0: y, s0: scroll[r.key], max: r.max, moved: false } : null;
@@ -270,9 +273,20 @@ mgu.run({
                 const took = drag.moved;
                 drag = null;
                 return took;
-            }));
+            });
+            if (typeof ctx.onTouch === 'function') ctx.onTouch(onDrag);
             const tap = (fn) => () => { if (Date.now() - dragged < 250) return; fn(); };
-            const btn = (cv, key, x, y, w, h, fn, r) => FS.button(cv, key, x, y, w, h, guard(key, tap(fn)), { r: r != null ? r : 16, slop: 4 });
+            // on the full view (lib/fullview.js) the targets are its own; on the page, the kit's
+            const btn = (cv, key, x, y, w, h, fn, r) => cv.fv ? (cv.fv.push({ key, x: x - 4, y: y - 4, w: w + 8, h: h + 8, run: guard(key, tap(fn)) }), cv)
+                : FS.button(cv, key, x, y, w, h, guard(key, tap(fn)), { r: r != null ? r : 16, slop: 4 });
+
+            /* ---------- the player over the whole screen (lib/fullview.js) ---------- */
+            const fv = createFullView({ RenderClient, Recorder: record.Recorder, appId: 'amn_iptv', log, W,
+                onTouch: onDrag, onCcu: () => { overlayUntil = Date.now() + 6000; } });
+            // the player page, the app's page shown and in front (not under Settings, not left with HOME)
+            const fvWanted = () => page === 'player' && ui.isVisible('MAIN') && !ui.isVisible('SETTINGS') && (!ui.hasFocus || ui.hasFocus('MAIN'));
+            ui.onVisible(guard('fullview', () => fv.update(fvWanted())));
+            setInterval(guard('fullview', () => fv.update(fvWanted())), 500);
 
             /* ---------- drawing pieces ---------- */
             function glass(cv, x, y, w, h, r, fill) { cv.roundRect(x, y, w, h, r, fill || C.card); }
@@ -729,7 +743,11 @@ mgu.run({
                 if (cv.chrome) G.frame(cv, ctx.theme(), ['IPTV'], 0, []);
                 regions.length = 0;
                 cv.fillRect(0, 0, W, fullH, C.bg);
-                if (page === 'player') drawPlayer(cv, A, fullH);
+                fv.update(fvWanted());
+                if (page === 'player' && fv.shown()) {
+                    cv.fillRect(0, 0, W, fullH, '#000000');
+                    fv.draw((rec, FH) => drawPlayer(rec, { x: 40, y: 24, right: W - 40, bottom: FH - 20, w: W - 80, h: FH - 44, own: true }, FH));
+                } else if (page === 'player') drawPlayer(cv, A, fullH);
                 else {
                     rail(cv, A);
                     const x0 = A.x + 128;
