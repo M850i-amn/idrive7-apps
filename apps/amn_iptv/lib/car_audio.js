@@ -7,9 +7,9 @@
  * no longer wanted. (The route is Moonride's, JustAnotherPU, as aurelmarius' TVH Player uses it; this file is
  * amn_iptv's own.)
  *
- * Other apps (myAirPlay, TVH Player) use 287 too, so only this app's own connection is ever disconnected: its id is
- * kept in a file with the boot it was made in (an id from before a restart may be another app's now, and is
- * forgotten, never disconnected). While another app's connection holds 287, this one does not connect and says so.
+ * Other apps (myAirPlay, TVH Player) use 287 too. This app's own connection id is kept in a file with the boot it was
+ * made in, and on stop only that one is disconnected. When a channel is chosen and 287 already has a connection this
+ * app cannot claim, it is disconnected and this app connects its own: the user chose this app's sound.
  *
  *   const audio = createCarAudio(ctx.signals, log, file);
  *   audio.want(true | false)       the sound on (a channel plays) or off
@@ -44,11 +44,13 @@ function createCarAudio(signals, log, file) {
         const left = saved();
         if (left != null && (await on287()).some((c) => c.mainConnectionID === left)) id = left;   // ours, from before a crash of the app
         if (id != null) { st.connected = true; return; }
+        // a connection nobody here can claim: the user just chose a channel in this app, so it is taken over. On the
+        // car (0.1.4) one was left by an earlier run of this app (replaced by an update or gone before it hung up)
+        // and kept every channel silent, saying "another app has the speakers" with no other app installed
         const other = await on287();
-        if (other.length) {
-            st.taken = true;
-            log.info('car audio: another app has the speakers (' + other.map((c) => c.mainConnectionID).join(', ') + ')');
-            return;
+        for (const c of other) {
+            log.info('car audio: taking over the speakers from connection ' + c.mainConnectionID);
+            await signals.call(p, 'disconnect', { mainConnectionID: c.mainConnectionID });
         }
         st.taken = false;
         await avail(true);
