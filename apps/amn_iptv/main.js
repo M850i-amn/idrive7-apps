@@ -39,7 +39,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -239,11 +239,14 @@ mgu.run({
             }
             try { park.start(ctx.signals, log); } catch (e) { log.warn('park: ' + e.message); }
             const pictureAllowed = () => !!settingsGet('motion') || park.isParked();
-            // the video file named to the renderer once it can show video (again after a reconnect: renderd.js keeps it)
+            // the video file named to the renderer once it can show video and the player has made the file (again after a
+            // reconnect: renderd.js keeps it). The renderer opens it once: named before tvh-player's first channel since
+            // the head unit started, it answered "cannot open" and was never asked again (the player keeps the file after)
             let videoNamed = false;
             function videoReady() {
                 const g = ctx.display && ctx.display.gpu;
                 if (!g || !g.ready || !g.native || !g.info || !g.info.video) return false;
+                if (!videoNamed && !fs.existsSync(VIDEO_FILE)) return false;
                 if (!videoNamed) { videoNamed = g.video(VID, VIDEO_FILE) !== false; if (videoNamed) log.info('video: ' + VIDEO_FILE + ' named to the renderer'); }
                 return videoNamed;
             }
