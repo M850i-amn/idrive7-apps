@@ -86,8 +86,26 @@ extern "C" {
 #include "mgvf.h"
 #include "mfx/mfxvideo.h"
 
-/* decoder_msdk.cpp asks this for HEVC only; the server's profiles send H.264 */
-int hevc_plugin(mfxSession s, void *plugin) { (void) s; (void) plugin; return -1; }
+/* The unit's HEVC hardware decoder plugin into session s (decoder_msdk.cpp asks for it when the stream is HEVC), as
+ * libmfx's dispatcher would: CreatePlugin(MFX_PLUGINID_HEVCD_HW) from BMW's /usr/lib/mediasdk/libmfx_hevcd_hw64.so fills
+ * an mfxPlugin (opaque here, under 256 bytes), MFXVideoUSER_Register(DECODE) hands it to the session. 0 = registered,
+ * else the failing step's code (dlopen -1000, symbol -1001). From JustAnotherPU/moonride native/mgu-moonlight/src/probe.cpp
+ * (GPL-3.0), whose Moonlight client decodes HEVC with it on iDrive 7 units. */
+extern "C" mfxStatus MFXVideoUSER_Register(mfxSession session, mfxU32 type, const void *plugin);
+int hevc_plugin(mfxSession s, void *plugin)
+{
+    struct Uid { unsigned char d[16]; };
+    static const Uid HEVCD_HW = {{0x33, 0xa6, 0x1c, 0x0b, 0x4c, 0x27, 0x45, 0x4c, 0xa8, 0xd8, 0x5d, 0xde, 0x75, 0x7c, 0x6f, 0x8e}};
+    static void *lib = nullptr;   /* plugin: 256 bytes, 16-aligned, alive as long as the session uses it */
+    if (!lib) lib = dlopen("/usr/lib/mediasdk/libmfx_hevcd_hw64.so", RTLD_NOW | RTLD_LOCAL);
+    if (!lib) return -1000;
+    auto create = (mfxStatus(*)(Uid, void *))dlsym(lib, "CreatePlugin");
+    if (!create) return -1001;
+    memset(plugin, 0, 256);
+    mfxStatus st = create(HEVCD_HW, plugin);
+    if (st < MFX_ERR_NONE) return (int)st;
+    return (int)MFXVideoUSER_Register(s, 1 /* MFX_PLUGINTYPE_VIDEO_DECODE */, plugin);
+}
 
 namespace {
 
@@ -252,6 +270,7 @@ double first_pts() { std::lock_guard<std::mutex> l(g_first_mu); return isnan(g_f
 
 /* ---------- video ---------- */
 bool g_video_off = false;
+bool g_hevc = false;   /* the picture is HEVC (films, 4K channels): the decoder takes the unit's HEVC plugin, whole frames */
 /* a film (MGU_INPUT_URL): the IPTV service's own address for it on 127.0.0.1, opened in its own container (MP4, MKV,
    TS) and read where the demuxer asks (an MP4's index may be at its end); MGU_START_S: where it starts (a skip or a
    resume is a new player started there). Without it: live TV, MPEG-TS on stdin */
@@ -463,7 +482,7 @@ void video_thread() {
     }
     if (!g_video_off) {
         std::string err;
-        open = dec.init("/dev/dri/renderD128", g_vw, g_vh, false, &err);
+        open = dec.init("/dev/dri/renderD128", g_vw, g_vh, false, &err, g_hevc);
         if (open) event("{\"ev\":\"decoder\",\"ok\":true,\"path\":\"%s\",\"w\":%u,\"h\":%u}", js(g_video_path).c_str(), g_vw, g_vh);
         else event("{\"ev\":\"decoder\",\"ok\":false,\"error\":\"%s\"}", js(err).c_str());
     } else event("{\"ev\":\"decoder\",\"ok\":false,\"error\":\"off (MGU_VIDEO_OFF)\"}");
@@ -1039,10 +1058,12 @@ int main() {
     const int vi = av_find_best_stream(fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     const int ai = av_find_best_stream(fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     AVStream *vs = vi >= 0 ? fmt->streams[vi] : nullptr, *as = ai >= 0 ? fmt->streams[ai] : nullptr;
-    if (vs && vs->codecpar->codec_id != AV_CODEC_ID_H264) {
-        event("{\"ev\":\"error\",\"error\":\"video %s: only H.264 plays here (choose a profile that transcodes)\"}", avcodec_get_name(vs->codecpar->codec_id));
+    if (vs && vs->codecpar->codec_id != AV_CODEC_ID_H264 && vs->codecpar->codec_id != AV_CODEC_ID_HEVC) {
+        event("{\"ev\":\"error\",\"error\":\"video %s: only H.264 and HEVC play here\"}", avcodec_get_name(vs->codecpar->codec_id));
         vs = nullptr;
     }
+    g_hevc = vs && vs->codecpar->codec_id == AV_CODEC_ID_HEVC;
+    if (g_hevc) fprintf(stderr, "tvh-player: HEVC, profile %d (1 Main, 2 Main 10), %dx%d\n", vs->codecpar->profile, vs->codecpar->width, vs->codecpar->height);
     g_has_video = vs != nullptr;
     if (vs) {
         picture_size(vs->codecpar, av_guess_sample_aspect_ratio(fmt, vs, nullptr));
@@ -1088,18 +1109,18 @@ int main() {
     /* MP4 and MKV carry H.264 as length-prefixed NAL units with the SPS and PPS aside (avcC); the decoder reads
        Annex B with them in line: h264_mp4toannexb (MPEG-TS is Annex B already) */
     AVBSFContext *bsf = nullptr;
-    if (vs && vs->codecpar->extradata_size > 0 && vs->codecpar->extradata[0] == 1) {
-        const AVBitStreamFilter *f = av_bsf_get_by_name("h264_mp4toannexb");
+    if (vs && vs->codecpar->extradata_size > 0 && vs->codecpar->extradata[0] == 1) {   /* avcC / hvcC: version 1 */
+        const AVBitStreamFilter *f = av_bsf_get_by_name(g_hevc ? "hevc_mp4toannexb" : "h264_mp4toannexb");
         bool ok = f && av_bsf_alloc(f, &bsf) >= 0 && avcodec_parameters_copy(bsf->par_in, vs->codecpar) >= 0;
         if (ok) { bsf->time_base_in = vs->time_base; ok = av_bsf_init(bsf) >= 0; }
         if (!ok) {
             av_bsf_free(&bsf);
-            event("{\"ev\":\"error\",\"error\":\"the picture's H.264 framing (avcC) cannot be read here\"}");
+            event("{\"ev\":\"error\",\"error\":\"the picture's framing (avcC / hvcC) cannot be read here\"}");
             g_quit = true;
         }
     }
     event("{\"ev\":\"open\",\"video\":%s%s%s,\"audio\":%s%s%s,\"duration\":%.3f}",
-          vs ? "{\"codec\":\"h264\",\"w\":" : "null", vs ? std::to_string(vs->codecpar->width).c_str() : "",
+          vs ? (g_hevc ? "{\"codec\":\"hevc\",\"w\":" : "{\"codec\":\"h264\",\"w\":") : "null", vs ? std::to_string(vs->codecpar->width).c_str() : "",
           vs ? (",\"h\":" + std::to_string(vs->codecpar->height) + vtail(vs)).c_str() : "",
           as ? "{\"codec\":\"" : "null", as ? avcodec_get_name(as->codecpar->codec_id) : "",
           as ? ("\",\"rate\":" + std::to_string(as->codecpar->sample_rate) + ",\"channels\":" + std::to_string(as->codecpar->ch_layout.nb_channels) + "}").c_str() : "",
@@ -1135,7 +1156,7 @@ int main() {
             g_apar = as->codecpar; g_atb = as->time_base; g_has_audio = true;
             fprintf(stderr, "tvh-player: the sound came later: stream %d %s\n", pkt->stream_index, avcodec_get_name(as->codecpar->codec_id));
             event("{\"ev\":\"open\",\"video\":%s%s%s,\"audio\":{\"codec\":\"%s\",\"rate\":%d,\"channels\":%d},\"late\":true}",
-                  vs ? "{\"codec\":\"h264\",\"w\":" : "null", vs ? std::to_string(vs->codecpar->width).c_str() : "",
+                  vs ? (g_hevc ? "{\"codec\":\"hevc\",\"w\":" : "{\"codec\":\"h264\",\"w\":") : "null", vs ? std::to_string(vs->codecpar->width).c_str() : "",
                   vs ? (",\"h\":" + std::to_string(vs->codecpar->height) + "}").c_str() : "",
                   avcodec_get_name(as->codecpar->codec_id), as->codecpar->sample_rate, as->codecpar->ch_layout.nb_channels);
             at = std::thread(audio_thread);

@@ -2,7 +2,7 @@
 # Builds build/tvh-player for the head unit, in ubuntu:18.04 (glibc 2.27, as the unit). Needs git, python3 and
 # Docker. FFmpeg n6.1.2 (the same pinned commit as the other players), configured with only what it plays: live TV
 # (the mpegts demuxer on stdin) and films (the mov and matroska demuxers too, over the http and tcp protocols to the
-# IPTV service's 127.0.0.1 address, no TLS), the h264 / aac / ac3 / mpegaudio parsers, h264_mp4toannexb, the aac,
+# IPTV service's 127.0.0.1 address, no TLS), the h264 / hevc / aac / ac3 / mpegaudio parsers, h264_mp4toannexb and hevc_mp4toannexb, the aac,
 # ac3, eac3, mp2 and mp3 decoders, and the DVB subtitle decoder. Everything else is in this folder.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
@@ -21,18 +21,18 @@ docker run --rm -v "$here:/n/tvh-player" -w /n/tvh-player ubuntu:18.04 sh -c '
     apt-get update -qq >/dev/null
     apt-get install -y -qq --no-install-recommends build-essential python3 python3-pyelftools >/dev/null
     # rebuilt when the configuration below changes (the DVB subtitle decoder came in 0.1.6)
-    if [ ! -f build/ffmpeg/lib/libavformat.a ] || [ "$(cat build/ffmpeg/.flags 2>/dev/null)" != "film-1" ]; then
+    if [ ! -f build/ffmpeg/lib/libavformat.a ] || [ "$(cat build/ffmpeg/.flags 2>/dev/null)" != "film-2" ]; then
         rm -rf build/ffmpeg-bld && cp -r build/ffmpeg-src build/ffmpeg-bld
         (cd build/ffmpeg-bld && ./configure --prefix=/n/tvh-player/build/ffmpeg --disable-everything --disable-programs --disable-doc \
             --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample --disable-postproc \
             --enable-network --disable-x86asm --disable-autodetect --disable-iconv \
             --enable-protocol=http --enable-protocol=tcp \
             --enable-avformat --enable-demuxer=mpegts --enable-demuxer=mov --enable-demuxer=matroska \
-            --enable-parser=h264 --enable-parser=aac --enable-parser=ac3 --enable-parser=mpegaudio \
-            --enable-bsf=h264_mp4toannexb \
+            --enable-parser=h264 --enable-parser=hevc --enable-parser=aac --enable-parser=ac3 --enable-parser=mpegaudio \
+            --enable-bsf=h264_mp4toannexb --enable-bsf=hevc_mp4toannexb \
             --enable-decoder=aac --enable-decoder=ac3 --enable-decoder=eac3 --enable-decoder=mp2float --enable-decoder=mp3float \
             --enable-decoder=dvbsub --enable-parser=dvbsub \
-            --enable-static --disable-shared --enable-pic >/dev/null && make -s -j"$(nproc)" >/dev/null 2>&1 && make -s install >/dev/null) && echo film-1 > build/ffmpeg/.flags
+            --enable-static --disable-shared --enable-pic >/dev/null && make -s -j"$(nproc)" >/dev/null 2>&1 && make -s install >/dev/null) && echo film-2 > build/ffmpeg/.flags
     fi
     make -s OUT=build/out FFMPEG=/n/tvh-player/build/ffmpeg -j"$(nproc)"
     chown -R '"$(id -u):$(id -g)"' build
