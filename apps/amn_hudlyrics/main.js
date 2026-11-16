@@ -33,7 +33,7 @@ const LyricsLib = require('./lyrics');
 const http = require('./http');
 const MC = require('./music_cluster');
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const W = 1600, H = 520;
 const IFACES = [
     { iface: 'de.bmw.infotainment.a4a.carplay.CarPlayManager', instances: ['CarPlayManagerInst1'] },

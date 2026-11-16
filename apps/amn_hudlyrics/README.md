@@ -20,6 +20,9 @@ If the HUD stays dark, the pills say which part stopped.
 
 ## The HUD (experimental)
 
+The app starts with the car (from 0.3.1) and runs in the background: once the HUD is on in Settings, the lyrics follow
+the music without opening the app. After installing, restart the head unit once.
+
 Off until you switch on **Settings > Lyrics in the HUD (experimental)**. Then, while a song with synced lyrics
 plays, the line being sung shows in the HUD, inside its visible window and above the speed readout, drawn at
 the HUD's own resolution (no stretching). One line: a new line fades in where the last one was. Two lines: the
