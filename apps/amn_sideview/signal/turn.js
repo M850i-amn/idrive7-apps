@@ -112,7 +112,7 @@ class Turn {
         this._split();
         this.marks.at = now;
         const side = c.which === 'left' ? 'Left' : 'Right';
-        if (!m.length) return { which: c.which, ok: false, text: side + ': nothing changed in the light status - signal and tap again' };
+        if (!m.length) return { which: c.which, ok: false, text: side + ': nothing changed in the light status - tap Car check and send a photo' };
         if (!this.marks[c.which].length) return { which: c.which, ok: false, text: side + ' looks the same as the other side - this field cannot tell them apart' };
         return { which: c.which, ok: true, text: side + ' learned (' + this.marks[c.which].length + ' sign' + (this.marks[c.which].length > 1 ? 's' : '') + ')' };
     }

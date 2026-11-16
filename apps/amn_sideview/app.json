@@ -2,7 +2,7 @@
   "id": "amn_sideview",
   "title": "Side View",
   "description": "The side you signal, on the instrument cluster: left signal, the left side; right signal, the right side; signal off, it goes a moment later; hazards, nothing. It starts with the car and runs in the background. Teach it the turn signals once, parked (three taps). 0.1 shows a panel naming the side: the camera picture plugs in once its source on the car is found, and Camera check lists what the app can see toward that. Never covers the speed, the gear or the warning lamps. Read-only toward the car (it reads the light status only), no internet. Needs the Cluster renderer tool from the Store.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "vendor": "amn",
   "mguAppStartType": "autostart",
   "loggingId": "OAH1",
@@ -22,7 +22,7 @@
         ["BTN_LEFT", "Left is on"],
         ["BTN_RIGHT", "Right is on"],
         ["BTN_TEST", "Test cluster"],
-        ["BTN_CAMS", "Camera check"],
+        ["BTN_CAMS", "Car check"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }

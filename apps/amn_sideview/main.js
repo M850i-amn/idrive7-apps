@@ -24,7 +24,7 @@ const { Turn, CAPTURE_MS } = require('./turn');
 const { SidePanel, PW, PH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const POLL_MS = 300;              // the light status re-read this often (the car may not notify each flash)
@@ -95,7 +95,7 @@ mgu.run({
             };
             let toast = null;
             const say = (text, ms) => { toast = { text: text, until: Date.now() + (ms || 4000) }; };
-            let page = 'main', cams = null, test = null, light = { state: 'connecting', n: 0, at: 0 };
+            let page = 'main', cams = null, sigs = null, test = null, light = { state: 'connecting', n: 0, at: 0 };
 
             /* ---------- the car's light status ---------- */
             if (ctx.signals && ctx.signals.watch) {
@@ -150,8 +150,11 @@ mgu.run({
             ui.onClick('BTN_CAMS', guard('cams', () => {
                 if (page === 'cams') { page = 'main'; return; }
                 cams = camprobe.probe();
+                sigs = camprobe.findSignals();
                 page = 'cams';
                 camprobe.lines(cams).forEach((l) => log.info('camera check: ' + l));
+                log.info('signal finder: ' + sigs.files.join(', ') + (sigs.error ? ' error: ' + sigs.error : '') + ' - ' + sigs.hits.length + ' hits');
+                sigs.hits.forEach((h) => log.info('signal finder: ' + h));
             }));
             settings.onChange(guard('settings', (k) => { if (k === 'cluster') say(settings.get('cluster') ? 'Cluster: on' : 'Cluster: off'); }));
 
@@ -213,11 +216,16 @@ mgu.run({
             function camsCard(cv) {
                 const x = 600, y = 36, w = W - 48 - x, h = 372, ix = x + 36, iw = w - 72;
                 glass(cv, x, y, w, h, 28);
-                cv.text('CAMERA CHECK  ·  WHAT THE APP CAN SEE', ix, y + 52, 14, C.blue, Object.assign({ spacing: 2.2 }, B));
-                const L = camprobe.lines(cams || camprobe.probe());
-                L.slice(0, 9).forEach((l, k) => cv.text(fit(cv, l, l.charAt(0) === ' ' ? 16 : 21, iw, M), ix, y + 96 + k * 28, l.charAt(0) === ' ' ? 16 : 21, l.charAt(0) === ' ' ? C.dim : C.text, M));
-                wrap(cv, 'Take a photo of this page for the next step: it tells where the camera picture could come from. Tap Camera check again to go back.', 18, iw, 2, M)
-                    .forEach((r, k) => cv.text(r, ix, y + h - 46 + k * 24, 18, C.faint, M));
+                cv.text('CAR CHECK  ·  TURN SIGNAL AND CAMERAS', ix, y + 52, 14, C.blue, Object.assign({ spacing: 2.2 }, B));
+                const sg = sigs || camprobe.findSignals();
+                const L = [];
+                L.push(sg.error && !sg.hits.length ? 'Turn-signal fields: ' + sg.error : 'Turn-signal fields found: ' + sg.hits.length);
+                sg.hits.slice(0, 7).forEach((h2) => L.push('  ' + h2));
+                if (sg.hits.length > 7) L.push('  ... and ' + (sg.hits.length - 7) + ' more (in the log)');
+                camprobe.lines(cams || camprobe.probe()).slice(0, 3).forEach((l) => L.push(l));
+                L.slice(0, 11).forEach((l, k) => { const sub = l.charAt(0) === ' ', sz = sub ? 15 : 19; cv.text(fit(cv, l, sz, iw, M), ix, y + 90 + k * 23, sz, sub ? C.dim : C.text, M); });
+                wrap(cv, 'Send a photo of this page: it tells which signal carries the turn signals, and where the camera picture could come from. Tap Car check again to go back.', 16, iw, 2, M)
+                    .forEach((r, k) => cv.text(r, ix, y + h - 40 + k * 22, 16, C.faint, M));
             }
             function statusRow(cv) {
                 const y = 428, hh = 64, gap = 14, x0 = 48, w = (W - 96 - 3 * gap) / 4;
