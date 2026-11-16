@@ -274,7 +274,7 @@ bool Decoder::State::start(const AccessUnit &au)
                      (hevc && hdr.mfx.CodecProfile == kProfileHevcMain10);
     if (!ten)
         return configure(hdr, 0);
-    static const char *const kTries[] = {"P010 Shift 1", "P010 Shift 0", "as the header says"};
+    static const char *const kTries[] = {"fewest surfaces", "fewest surfaces, one for VPP", "fewest, one for VPP, Shift 0"};
     std::string tried;
     for (int v = 1; v <= 3; v++) {
         if (v > 1) {
@@ -294,18 +294,23 @@ bool Decoder::State::start(const AccessUnit &au)
     return fail("10-bit HEVC refused (" + tried + ")");
 }
 
-/* The decoder and VPP for one sequence, from DecodeHeader's parameters. variant (amn-iptv): 0 as they are (8-bit);
+/* 0.3.4, from the car (0.3.3): every try failed in MFXVideoDECODE_Init with MFX_ERR_MEMORY_ALLOC - the P010 set-up is
+ * accepted, the surfaces are not: a 3840x1608 P010 surface is twice an NV12 one, and the pool was the decoder's and
+ * VPP's SUGGESTED counts (8-bit 4K fits, 10-bit did not). The tries now ask for less:
+ *   1: P010 Shift 1, the decoder's and VPP's MINIMUM counts; 2: the decoder's minimum + 1 (VPP reads one at a time,
+ *   synchronised: AsyncDepth 1); 3: as 2 with Shift 0. The error names the pool (count and size) of each try.
+ * The decoder and VPP for one sequence, from DecodeHeader's parameters. variant (amn-iptv): 0 as they are (8-bit);
  * a 10-bit picture 1: P010 with Shift 1 (Intel's MSB alignment), 2: P010 with Shift 0, 3: as DecodeHeader gave it. */
 bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
 {
     dec = hdr;
-    if (variant == 1 || variant == 2) {
+    if (variant >= 1) {
         mfxFrameInfo &fi = dec.mfx.FrameInfo;
         fi.FourCC = kFourccP010;
         fi.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
         if (fi.BitDepthLuma <= 8) fi.BitDepthLuma = 10;
         if (fi.BitDepthChroma <= 8) fi.BitDepthChroma = fi.BitDepthLuma;
-        fi.Shift = variant == 1 ? 1 : 0;
+        fi.Shift = variant == 3 ? 0 : 1;
     }
     mfxStatus sts;
 
@@ -384,6 +389,10 @@ bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
     if (sts < MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoVPP_QueryIOSurf", sts));
     mfxU16 n = (mfxU16)(dec_req.NumFrameSuggested + vpp_req[0].NumFrameSuggested);
+    if (variant == 1) n = (mfxU16)(dec_req.NumFrameMin + vpp_req[0].NumFrameMin);
+    else if (variant >= 2) n = (mfxU16)(dec_req.NumFrameMin + 1);
+    const std::string pool = " (" + std::to_string(n) + " surfaces " + std::to_string(in.Width) + "x" + std::to_string(in.Height) +
+                             ", decoder min " + std::to_string(dec_req.NumFrameMin) + " / suggested " + std::to_string(dec_req.NumFrameSuggested) + ")";
 
     /* Opaque surfaces: the application passes surface headers only, and MSDK
      * allocates the memory behind them when the decoder is initialised. VPP
@@ -412,11 +421,11 @@ bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
 
     sts = MFXVideoDECODE_Init(session, &dec);
     if (sts < MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoDECODE_Init", sts));
+        return fail(mfx_error("MFXVideoDECODE_Init", sts) + pool);
     sts = MFXVideoVPP_Init(session, &vpp);
     if (sts < MFX_ERR_NONE) {
         MFXVideoDECODE_Close(session);
-        return fail(mfx_error("MFXVideoVPP_Init", sts));
+        return fail(mfx_error("MFXVideoVPP_Init", sts) + pool);
     }
 
     /* One output surface suffices: each VPP run is synchronised before the
