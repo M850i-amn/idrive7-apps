@@ -6,7 +6,7 @@ This repository builds on, and keeps the licences of:
 - **nickgcode/idrive7-apps** (MIT, `kit/LICENSE.nickgcode`, `apps/amn_hudlyrics/LICENSE`): the MGU App Kit as
   used here, the LRCLIB lyrics client, and the HUD layer (`apps/amn_hudlyrics/hud/`, from G's Music 0.8.0), changed
   for a one-line mode and the HUD's measured visible window.
-- **cauliflowermossgrape/idrive7-apps** (MIT, `kit/LICENSE.idrive7-apps`): the MGU App Kit.
+- **cauliflowermossgrape/idrive7-apps** (MIT, `kit/LICENSE.idrive7-apps`): the MGU App Kit. Also Redline's HUD drawing (`apps/amn_hudlyrics/hud/redline/`, from Redline 2.0.42, HUD by @biscotit), unchanged, for HUD Lyrics' Sport HUD; `kit/runtime/hud_claim.js`.
 - **robertnisipeanu** (mgu-store, cluster-render): the Store and the cluster/HUD renderer, used as installed.
 
 - **Inter** (SIL Open Font License 1.1, `apps/amn_hudlyrics/data/fonts/LICENSE-Inter.txt`): the centre screen's type.

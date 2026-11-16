@@ -34,8 +34,10 @@ const http = require('./http');
 const MC = require('./music_cluster');
 // 0.4.0: Redline's HUD claim (kit/hud_claim.js): while Redline draws on the HUD (Sport), the lyrics step aside
 const { HudClaim } = require('./kit/hud_claim');
+// 0.5.0: in Sport, Redline's Ramp tach (after the G80/G82 M3 / M4) on the HUD in place of the lyrics (hud/sport.js)
+const { SportHud } = require('./sport');
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const W = 1600, H = 520;
 const IFACES = [
     { iface: 'de.bmw.infotainment.a4a.carplay.CarPlayManager', instances: ['CarPlayManagerInst1'] },
@@ -152,6 +154,8 @@ mgu.run({
 
             /* ---------- the HUD (G's Music's layer, target 'hud') ---------- */
             const mh = new MC.MusicCluster({ log: log, app: 'amn_hudlyrics', Canvas: Canvas, target: 'hud' });
+            const sport = new SportHud({ ctx: ctx, app: 'amn_hudlyrics', settings: settings });
+            ui.onClick('BTN_SPORT', guard('sport test', () => { sport.demo(8000); say('Sport HUD: an 8 s rev sweep on the HUD'); log.info('sport hud: test sweep'); }));
             const guide = { nav: null, carplay: null, aa: null };      // the latest raw value of each source
             const pushGuide = () => {
                 const show = !!settings.get('navShow');
@@ -176,7 +180,10 @@ mgu.run({
             };
             const hudTick = () => {
                 const t = cur ? { uri: cur.key, title: cur.title, artist: cur.artist, kind: 'track', duration: cur.duration, ad: false } : null;
-                mh.update({ setting: settings.get('hud') && !yielding() ? 'lyrics' : 'off', ok: !!cur, track: t, playing: !!(cur && cur.playing),
+                // Sport: the Ramp tach has the HUD, the lyrics step aside (another app holding the HUD outranks both)
+                const other = yielding(), tach = !other && sport.tick();
+                if (other) sport.close();
+                mh.update({ setting: settings.get('hud') && !other && !tach ? 'lyrics' : 'off', ok: !!cur, track: t, playing: !!(cur && cur.playing),
                     pos: position(), posFn: () => position(), lyrics: settings.get('hud') ? lyricsFor() : null,
                     size: settings.get('size'), lines: ({ '2': 2, '3': 3 })[settings.get('lines')] || 1 });
             };
@@ -200,7 +207,7 @@ mgu.run({
                 if (k === 'hud') { log.info('hud: ' + (settings.get('hud') ? 'on' : 'off')); say(settings.get('hud') ? 'Lyrics in the HUD: on (experimental)' : 'Lyrics in the HUD: off'); }
                 hudTick();
             }));
-            process.once('exit', () => { try { mh.close(); } catch (e) { /* closing */ } });
+            process.once('exit', () => { try { mh.close(); } catch (e) { /* closing */ } try { sport.close(); } catch (e) { /* closing */ } });
 
             /* ---------- the centre screen ---------- */
             let shown = { i: -2, at: 0, prev: -1 };      // the lyric line on screen, and when it changed
@@ -297,6 +304,8 @@ mgu.run({
                 const hv = mh.view();
                 if (hv.kind === 'off') hv.text = 'Off  ·  turn on in Settings';
                 if (settings.get('hud') && yieldTo.length) { hv.kind = 'wait'; hv.text = (yieldTo.indexOf('redline') >= 0 ? 'Redline' : yieldTo[0]) + ' has the HUD (Sport)'; }
+                const sv = sport.view();
+                if (!yieldTo.length && (sport.wants() || (sv.kind === 'error' && settings.get('sportHud') !== false))) { hv.kind = sv.kind; hv.text = 'Sport  ·  ' + sv.text; }
                 const lyrS = !cur ? ['grey', 'Waiting for a song'] : !lyr ? ['amber', 'Searching'] : ({
                     synced: ['green', 'Synced  ·  ' + (lyr.lines ? lyr.lines.length : 0) + ' lines'], loading: ['amber', 'Searching LRCLIB'],
                     plain: ['amber', 'Not synced'], instrumental: ['grey', 'Instrumental'], none: ['grey', 'Not on LRCLIB'],

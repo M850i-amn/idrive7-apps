@@ -82,14 +82,20 @@ The HUD, one line (default), two lines and three lines, over a mock windshield. 
 
 ![HUD, three lines](../../docs/screenshots/amn_hudlyrics/hud-three-lines-medium.png)
 
-## Sport mode: Redline's rev bar instead of the lyrics (0.4.0)
+## Sport mode: the rev tach instead of the lyrics (0.5.0)
 
-With **Redline** installed (from the Store) and its HUD on, the HUD follows the drive mode:
+In **Sport, Sport+ and Sport Individual** the HUD shows a rev tach in place of the lyrics: Redline's **Ramp**
+layout, after the G80/G82 M3 and M4's own head-up display. The rail climbs from the left and runs flat, the revs a
+band under it; eight slanted lights over it count in to the shift point (yellow, then red) and all flash red there;
+the gear big and squared with D / S / M beside it; oil under the gear and water on the right (blue while cold, red
+when hot). In **Comfort, Eco Pro and Adaptive** the lyrics come back. Nothing else of Redline comes with it: no shift
+learning, scoring or logs, and Redline need not be installed.
 
-- **Sport:** Redline's rev bar, gear and readouts. The lyrics step aside.
-- **Comfort, Eco Pro, Adaptive:** the lyrics.
+Settings: **Sport mode: rev tach on the HUD** (on by default), **Shift lights flash at** (6,200 rpm by default; the
+lights count in over the 1,500 rpm before it) and **Redline** (6,500 rpm, where the limiter flash starts and the
+scale ends a little after). **Test Sport HUD** on the main screen plays an 8-second rev sweep on the HUD, parked.
 
-Redline shows its HUD in Sport only by default (its setting "In Comfort / Eco Pro: Don't show"). While it draws,
-it holds the HUD (a claim in `/dev/shm/mgu-hud`, the kit's `hud_claim.js`); HUD Lyrics reads that claim every
-second and gives way, then comes back when Redline lets go. Choose Redline's look in Redline's own settings.
-To keep the lyrics in every mode, switch off **Give the HUD to Redline while it shows (Sport)**.
+The drawing is Redline's own (`hud/redline/`: hud-draw.js, hud-m.js and hud-theme.js from Redline 2.0.42,
+cauliflowermossgrape/idrive7-apps, MIT; HUD by @biscotit), copied unchanged; `hud/sport.js` feeds it from the car.
+If the Redline app itself is installed and holds the HUD, both the lyrics and this tach give way to it
+(**Give the HUD to the Redline app while it shows**).

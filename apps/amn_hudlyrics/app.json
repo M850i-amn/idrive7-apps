@@ -1,8 +1,8 @@
 {
   "id": "amn_hudlyrics",
   "title": "HUD Lyrics",
-  "description": "Synced lyrics for the song playing over CarPlay (Apple Music, Spotify...), one line at a time in the head-up display. The centre screen shows the song, the lyrics as they are sung, and a status row that says what each part is doing. It starts with the car and runs in the background, so the HUD lyrics follow the music without opening the app. The HUD is experimental and off until you switch it on in Settings; it hides during route guidance and when a song has no synced lyrics. With Redline installed and its HUD on, the HUD follows the drive mode: Redline's rev bar in Sport, the lyrics in Comfort, Eco Pro and Adaptive (Redline's default; switch off \"Give the HUD to Redline\" to keep the lyrics always). Read-only toward the car. Lyrics from LRCLIB (lrclib.net), its only internet host, through the Store's uplink. Needs the Cluster renderer tool from the Store.",
-  "version": "0.4.0",
+  "description": "Synced lyrics for the song playing over CarPlay (Apple Music, Spotify...), one line at a time in the head-up display, and in Sport, Sport+ and Sport Individual a rev tach in their place: Redline's Ramp layout (after the G80/G82 M3 and M4's HUD), with the shift lights, gear, D / S / M and oil and water; back to the lyrics in Comfort, Eco Pro and Adaptive. The centre screen shows the song, the lyrics as they are sung, and a status row that says what each part is doing. It starts with the car and runs in the background. The lyrics on the HUD are experimental and off until you switch them on in Settings; they hide during route guidance and when a song has no synced lyrics. Read-only toward the car. Lyrics from LRCLIB (lrclib.net), its only internet host, through the Store's uplink. Needs the Cluster renderer tool from the Store.",
+  "version": "0.5.0",
   "vendor": "amn",
   "mguAppStartType": "autostart",
   "loggingId": "OAH1",
@@ -20,6 +20,24 @@
       "_optional": "the HUD's route guidance check (Android Auto): projectedGuidanceActive",
       "_instances": "AndroidAutoProjectedManagerInst1",
       "projectedGuidanceActive": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS": {
+      "_optional": "the Sport HUD: rpm, oil and water",
+      "statusEngineSpeed2": "rs",
+      "statusEngineTemperature": "rs"
+    },
+    "de.bmw.infrastructure.VehicleInformation": {
+      "_optional": "the Sport HUD: the gear and the selector",
+      "statusGearboxDrive": "s",
+      "DataPowerTrain2": "s"
+    },
+    "de.bmw.infotainment.misc.MDrive": {
+      "_optional": "the Sport HUD: the gearbox programme (D / S / M)",
+      "dataDisplayGearbox": "s"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "_optional": "the drive mode: Sport shows the tach on the HUD",
+      "statusFESVehicleDynamicSwitchHMI": "rs"
     }
   },
   "screens": [
@@ -28,8 +46,18 @@
       "kind": "canvas",
       "title": "HUD Lyrics",
       "buttons": [
-        ["BTN_SYNC", "Song just started"],
-        ["BTN_SETTINGS", "Settings"]
+        [
+          "BTN_SYNC",
+          "Song just started"
+        ],
+        [
+          "BTN_SPORT",
+          "Test Sport HUD"
+        ],
+        [
+          "BTN_SETTINGS",
+          "Settings"
+        ]
       ]
     }
   ],
@@ -45,18 +73,85 @@
       "label": "HUD lines",
       "type": "choice",
       "default": "1",
-      "options": [["1", "One line"], ["2", "Two lines (next one dim)"], ["3", "Three lines (before, now, after)"]]
+      "options": [
+        [
+          "1",
+          "One line"
+        ],
+        [
+          "2",
+          "Two lines (next one dim)"
+        ],
+        [
+          "3",
+          "Three lines (before, now, after)"
+        ]
+      ]
     },
     {
       "key": "size",
       "label": "HUD text size",
       "type": "choice",
       "default": "medium",
-      "options": [["small", "Small"], ["medium", "Medium"], ["large", "Large"]]
+      "options": [
+        [
+          "small",
+          "Small"
+        ],
+        [
+          "medium",
+          "Medium"
+        ],
+        [
+          "large",
+          "Large"
+        ]
+      ]
+    },
+    {
+      "key": "sportHud",
+      "label": "Sport mode: rev tach on the HUD (Ramp, after the M3 / M4)",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "key": "shiftRpm",
+      "label": "Shift lights flash at",
+      "type": "number",
+      "unit": "rpm",
+      "default": 6200,
+      "steps": [
+        5000,
+        5500,
+        5800,
+        6000,
+        6200,
+        6300,
+        6500,
+        6800,
+        7000,
+        7300
+      ]
+    },
+    {
+      "key": "redlineRpm",
+      "label": "Redline (the limiter)",
+      "type": "number",
+      "unit": "rpm",
+      "default": 6500,
+      "steps": [
+        6000,
+        6250,
+        6500,
+        6800,
+        7000,
+        7200,
+        7500
+      ]
     },
     {
       "key": "redline",
-      "label": "Give the HUD to Redline while it shows (Sport)",
+      "label": "Give the HUD to the Redline app while it shows",
       "type": "bool",
       "default": true
     },
@@ -72,8 +167,26 @@
       "type": "number",
       "unit": "ms",
       "default": 0,
-      "steps": [-3000, -2000, -1500, -1000, -750, -500, -250, 0, 250, 500, 750, 1000, 1500, 2000, 3000]
+      "steps": [
+        -3000,
+        -2000,
+        -1500,
+        -1000,
+        -750,
+        -500,
+        -250,
+        0,
+        250,
+        500,
+        750,
+        1000,
+        1500,
+        2000,
+        3000
+      ]
     }
   ],
-  "retiredSettings": ["theme"]
+  "retiredSettings": [
+    "theme"
+  ]
 }
