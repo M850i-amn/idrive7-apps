@@ -42,7 +42,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -823,7 +823,10 @@ mgu.run({
                 ask.then((r) => {
                     search.busy = false;
                     if (search.text.trim() !== q || search.mode !== mode) { search.asked = ''; return; }
-                    search.results = r.error ? { error: r.error, channels: [], items: [] } : { channels: r.channels || [], items: r.items || [] };
+                    search.results = r.error ? { error: r.error, channels: [], items: [] } : { channels: r.channels || [], items: r.items || [],
+                        progress: r.complete === false ? { done: r.done || 0, total: r.total || 0 } : null };
+                    // films and series are indexed category by category: ask again until the index is complete
+                    if (r.complete === false) { search.asked = ''; search.at = Date.now() + 800; }
                 }, (e) => { search.busy = false; search.results = { error: e.message, channels: [], items: [] }; });
             }
             setInterval(guard('search', () => { if (page === 'search' && Date.now() - search.at > 700) runSearch(); }), 300);
@@ -850,11 +853,21 @@ mgu.run({
                 const res = search.results, vodMode = search.mode !== 'channels';
                 const list = res ? (vodMode ? res.items : shownList(res.channels)) : [];
                 const what = { channels: 'channel', movies: 'movie', series: 'series' }[search.mode];
-                if (search.busy) cv.text(cats.length ? 'Searching every ' + what + ' (the first search takes a few seconds)...' : 'Searching...', rx, ry + 30, 18, C.grey, M);
+                const prog = res && res.progress;
+                if (search.busy && !(res && res.items && res.items.length)) cv.text(prog ? 'Searching...' : 'Searching every ' + what + '...', rx, ry + 30, 18, C.grey, M);
                 else if (res && res.error) cv.text(fit(cv, res.error, 18, rw, M), rx, ry + 30, 18, C.red, M);
-                else if (res && !list.length) cv.text('No ' + what + ' found.', rx, ry + 30, 18, C.grey, M);
+                else if (res && !list.length && !prog) cv.text('No ' + what + ' found.', rx, ry + 30, 18, C.grey, M);
+                else if (res && !list.length) cv.text('Nothing yet...', rx, ry + 30, 18, C.grey, M);
                 else if (!res) cv.text('Results show here as you type.', rx, ry + 30, 18, C.grey, M);
-                if (vodMode) { drawVodResults(cv, A, list, rx, ry, rw); drawKeyboard(cv, A, kb, x0, ry, kbW); return; }
+                if (vodMode) {
+                    // the first search of a while indexes the account's categories: say how far, results come as they are found
+                    if (prog && prog.total) {
+                        cv.text(fit(cv, 'Looking through your ' + (search.mode === 'series' ? 'series' : 'movies') + ': ' + prog.done + ' of ' + prog.total + ' categories', 16, rw, M), rx, A.bottom - 6, 16, C.amber, M);
+                    }
+                    drawVodResults(cv, A, list, rx, list.length ? ry : ry + 50, rw, prog ? 26 : 0);
+                    drawKeyboard(cv, A, kb, x0, ry, kbW);
+                    return;
+                }
                 const rowH = PLATE.guide[1] + 10, vis = Math.floor((A.bottom - ry) / rowH);
                 const maxS = Math.max(0, (list.length - vis) * rowH);
                 scroll.results = Math.min(scroll.results, maxS);
@@ -873,12 +886,12 @@ mgu.run({
                 drawKeyboard(cv, A, kb, x0, ry, kbW);
             }
             /** a film's or a series' search results: poster, title, year; a tap opens its page */
-            function drawVodResults(cv, A, list, rx, ry, rw) {
-                const kind = search.mode, [pw, ph] = POSTER.result, rowH = ph + 12, vis = Math.floor((A.bottom - ry) / rowH);
+            function drawVodResults(cv, A, list, rx, ry, rw, foot) {
+                const kind = search.mode, [pw, ph] = POSTER.result, rowH = ph + 12, bottom = A.bottom - (foot || 0), vis = Math.floor((bottom - ry) / rowH);
                 const maxS = Math.max(0, (list.length - vis) * rowH);
                 scroll.results = Math.min(scroll.results, maxS);
-                regions.push({ key: 'results', x: rx, y: ry, w: rw, h: A.bottom - ry, max: maxS });
-                cv.clip(rx, ry, rw, A.bottom - ry);
+                regions.push({ key: 'results', x: rx, y: ry, w: rw, h: bottom - ry, max: maxS });
+                cv.clip(rx, ry, rw, bottom - ry);
                 const f0 = Math.floor(scroll.results / rowH);
                 list.slice(f0, f0 + vis + 2).forEach((it, i) => {
                     const yy = ry + (f0 + i) * rowH - scroll.results;

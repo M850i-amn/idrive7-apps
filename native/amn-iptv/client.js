@@ -113,7 +113,7 @@ function run(account) {
     forget();
     refresh(true);
 }
-function stop() { running = false; clearTimeout(timer); pb.stop(); fm.stop(); vodKept.clear(); vodAll.clear(); }
+function stop() { running = false; clearTimeout(timer); pb.stop(); fm.stop(); vodKept.clear(); vodIndex.movies = vodIndex.series = null; }
 
 const view = (c) => ({ id: c.id, name: ascii(c.name), icon: c.icon, cat: c.cat, num: c.num, hevc: c.hevc });
 
@@ -160,22 +160,42 @@ function rank(list, q, n) {
     hits.sort((x, y) => x.rank - y.rank || x.c.name.length - y.c.name.length);
     return hits.slice(0, n).map((h) => h.c);
 }
-/* every film or every series of the account, for search: loaded on the first search, kept 30 minutes */
-const vodAll = new Map();   // 'movies' | 'series' -> { at, list, loading }
-function allVod(kind) {
-    const k = vodAll.get(kind);
-    if (k && k.list && Date.now() - k.at < 30 * 60000) return Promise.resolve(k.list);
-    if (k && k.loading) return k.loading;
-    const loading = (kind === 'series' ? xt.allSeries() : xt.allFilms()).then((l) => {
-        const list = l.map((x) => Object.assign({}, x, { name: ascii(x.name), key: ascii(x.name).toLowerCase() }));
-        vodAll.set(kind, { at: Date.now(), list });
-        return list;
-    }, (e) => { vodAll.delete(kind); throw e; });
-    vodAll.set(kind, { loading });
-    return loading;
+/* every film or every series of the account, for search: indexed category by category in the background (an
+   account's whole list in one answer is tens of megabytes: on the car it took minutes and could pass ALL_MAX), two
+   categories at a time; a search answers from what is indexed so far, with the progress, and the app asks again
+   until it is complete. Kept 6 hours; the categories' lists also serve browsing (vodKept). */
+const vodIndex = { movies: null, series: null };   // { items: Map id -> item, done, total, at, running, error }
+const INDEX_MS = 6 * 3600000;
+function indexOf(kind) {
+    let ix = vodIndex[kind];
+    if (ix && (ix.running || (ix.at && Date.now() - ix.at < INDEX_MS) || (ix.error && Date.now() - ix.failedAt < 30000))) return ix;
+    ix = vodIndex[kind] = { items: new Map(), done: 0, total: 0, at: 0, running: true, error: null, failedAt: 0 };
+    const cats = kind === 'series' ? xt.seriesCategories() : xt.filmCategories();
+    cats.then(async (list) => {
+        ix.total = list.length;
+        let next = 0;
+        const worker = async () => {
+            while (next < list.length && vodIndex[kind] === ix) {
+                const c = list[next++];
+                try {
+                    const items = await (kind === 'series' ? xt.series(c.id) : xt.films(c.id));
+                    items.forEach((x) => { const name = ascii(x.name); ix.items.set(x.id, Object.assign({}, x, { name, key: name.toLowerCase() })); });
+                    vodKept.set((kind === 'series' ? 's:' : 'f:') + c.id, { at: Date.now(), v: items.map((x) => Object.assign({}, x, { name: ascii(x.name) })) });
+                } catch (e) { log(kind + ' index: ' + c.id + ': ' + e.message); }
+                ix.done++;
+            }
+        };
+        await Promise.all([worker(), worker()]);
+        ix.running = false; ix.at = Date.now();
+        log(kind + ' index: ' + ix.items.size + ' in ' + ix.total + ' categories');
+    }).catch((e) => { ix.running = false; ix.error = e.message; ix.failedAt = Date.now(); log(kind + ' index: ' + e.message); });
+    return ix;
 }
-async function vodSearch(kind, q) {
-    return rank(await allVod(kind === 'series' ? 'series' : 'movies'), q, 60).map((x) => { const v = Object.assign({}, x); delete v.key; return v; });
+function vodSearch(kind, q) {
+    const ix = indexOf(kind === 'series' ? 'series' : 'movies');
+    if (ix.error && !ix.items.size) return Promise.reject(new Error(ix.error));
+    const items = rank(Array.from(ix.items.values()), q, 60).map((x) => { const v = Object.assign({}, x); delete v.key; return v; });
+    return Promise.resolve({ items, done: ix.done, total: ix.total, complete: !ix.running });
 }
 /** what is on now and next, per channel: asked 4 at a time, kept until the programme on now ends */
 async function nowOf(ids) {
