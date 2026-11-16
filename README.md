@@ -7,6 +7,7 @@ Apps for BMW head units with **iDrive 7** (MGU), installed from the car through
 |---|---|
 | [IPTV](apps/amn_iptv/README.md) | Your own Xtream Codes IPTV account's live channels on the centre screen, UHF-style: favourites, TV guide, categories, search, full-screen player. Needs the **IPTV service** (same source). Your login stays on your car. |
 | [HUD Lyrics](apps/amn_hudlyrics/README.md) | Synced lyrics for the song playing over CarPlay, one line at a time in the head-up display (experimental, off until switched on), and a Now Playing page on the centre screen. In Sport a rev tach replaces the lyrics (Redline's Ramp layout, after the G80 M3 / M4), back to the lyrics in Comfort, Eco Pro and Adaptive. |
+| [Side View](apps/amn_sideview/README.md) | The side you signal on the instrument cluster: left signal, left side; right signal, right side. 0.1: teach it the turn signals once, parked, and test the cluster; the camera picture comes once its source on the car is found. Needs the **Cluster renderer** tool. |
 
 ## Install
 
