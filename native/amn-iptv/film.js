@@ -35,7 +35,9 @@ function createFilm(o) {
     const xt = o.xt, log = o.log || (() => {}), sink = o.sink, now = o.now || Date.now;
     const prefs = o.prefs || (() => null);
     let ids = FIRST_ID, cur = null, server = null, listening = null;
-    const st = { kind: 'film', state: 'idle', error: null, film: null, pos: 0, duration: null, audioError: null, video: null, at: now() };
+    // videoError: the decoder's refusal; shown / decerr: pictures shown and failed to decode (the player's ticks), for "No picture"
+    const st = { kind: 'film', state: 'idle', error: null, film: null, pos: 0, duration: null, audioError: null, video: null, videoError: null,
+        shown: 0, decerr: 0, profile: null, at: now() };
     const set = (state, error) => { st.state = state; st.error = error || null; st.at = now(); };
 
     /* ---------- the player's source on 127.0.0.1 ---------- */
@@ -77,7 +79,7 @@ function createFilm(o) {
     function startPlayer(c, at) {
         const id = ++ids;
         c.pid = id; c.pos = Math.max(0, at); c.lastError = null; c.done = false;
-        st.pos = c.pos; st.audioError = null;
+        st.pos = c.pos; st.audioError = null; st.videoError = null; st.shown = 0; st.decerr = 0;
         set('loading');
         listen().then((port) => {
             if (cur !== c || c.pid !== id) return;
@@ -137,6 +139,10 @@ function createFilm(o) {
             if (ev.state === 'playing') { if (st.state !== 'playing') set('playing'); }
             else if (ev.state === 'buffering' && st.state === 'playing') set('buffering');
             if (typeof ev.pos === 'number' && ev.pos > 0) { st.pos = ev.pos; c.pos = ev.pos; }
+            if (typeof ev.shown === 'number') st.shown = ev.shown;
+            if (typeof ev.decerr === 'number') st.decerr = ev.decerr;
+        } else if (ev.ev === 'decoder' && ev.ok === false) {
+            st.videoError = ev.error || 'the decoder did not start';
         } else if (ev.ev === 'audio' && ev.ok === false) {
             st.audioError = ev.error || 'this sound does not play here';
         } else if (ev.ev === 'error') {

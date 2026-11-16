@@ -43,7 +43,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -962,8 +962,8 @@ mgu.run({
                 }
                 // the controls (the arrow among them) only after a tap: the picture, or the message, stays clean otherwise
                 const show = Date.now() < overlayUntil || panel;
-                // why there is no sound, said over the picture: the player's, the speakers' (lib/car_audio.js)
-                const snd = soundProblem(pb);
+                // why there is no sound, or no picture, said over the picture
+                const snd = soundProblem(pb) || pictureProblem(pb);
                 if (snd && !msg) {
                     const sw = cv.textWidth(fit(cv, snd, 19, W - 400, M), 19, M) + 52;
                     cv.roundRect((W - sw) / 2, A.y + 6, sw, 42, 21, A_('#000000', 0.7));
@@ -1026,6 +1026,16 @@ mgu.run({
                 if (panel === 'guide') drawGuidePanel(cv, A, ch, by);
                 if (panel === 'channels') drawChannelsPanel(cv, A, by);
                 picBtn();
+            }
+            // what keeps a playing film's picture away (sound playing): the decoder's refusal, or no picture decoded in 8 s
+            let blindSince = 0;
+            function pictureProblem(pb) {
+                if (!pb || pb.kind !== 'film' || pb.state !== 'playing') { blindSince = 0; return null; }
+                const v = pb.video || {}, what = (v.codec || '?').toUpperCase() + ' ' + (v.w || '?') + 'x' + (v.h || '?');
+                if (pb.videoError) return 'No picture (' + what + '): ' + pb.videoError;
+                if (pb.shown > 0) { blindSince = 0; return null; }
+                if (!blindSince) blindSince = Date.now();
+                return Date.now() - blindSince > 8000 ? 'No picture (' + what + '): nothing decoded, ' + (pb.decerr || 0) + ' decode errors' : null;
             }
             // what keeps a playing channel silent, or null
             let silentSince = 0;
