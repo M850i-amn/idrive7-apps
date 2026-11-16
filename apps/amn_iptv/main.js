@@ -41,7 +41,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.6';
+const VERSION = '0.1.7';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -241,17 +241,23 @@ mgu.run({
             }
             try { park.start(ctx.signals, log); } catch (e) { log.warn('park: ' + e.message); }
             const pictureAllowed = () => !!settingsGet('motion') || park.isParked();
-            // the video file named to the renderer once it can show video and the player has made the file (again after a
-            // reconnect: renderd.js keeps it). The renderer opens it once: named before tvh-player's first channel since
-            // the head unit started, it answered "cannot open" and was never asked again (the player keeps the file after)
-            let videoNamed = false;
+            // the video file named to the renderer once it can show video and the player has made the file, and named again
+            // whenever the file is another one (renderd.js names it again after a reconnect). The renderer keeps the file
+            // it opened: the service deletes the file when a channel ends (native/amn-iptv/player.js) and the next
+            // channel's player makes a new one, so a channel change left the first channel's last picture on screen
+            let videoIno = null;
+            const gpuVideo = () => { const g = ctx.display && ctx.display.gpu; return !!(g && g.ready && g.native && g.info && g.info.video); };
             function videoReady() {
                 const g = ctx.display && ctx.display.gpu;
                 if (!g || !g.ready || !g.native || !g.info || !g.info.video) return false;
-                if (!videoNamed && !fs.existsSync(VIDEO_FILE)) return false;
-                if (!videoNamed) fv.video(VID, VIDEO_FILE);
-                if (!videoNamed) { videoNamed = g.video(VID, VIDEO_FILE) !== false; if (videoNamed) log.info('video: ' + VIDEO_FILE + ' named to the renderer'); }
-                return videoNamed;
+                let ino = null;
+                try { ino = fs.statSync(VIDEO_FILE).ino; } catch (e) { /* not made yet, or between two channels */ }
+                if (ino == null) return false;
+                if (ino !== videoIno) {
+                    g.video(VID, VIDEO_FILE); fv.video(VID, VIDEO_FILE); videoIno = ino;
+                    log.info('video: ' + VIDEO_FILE + ' (inode ' + ino + ') named to the renderer');
+                }
+                return true;
             }
 
             /* ---------- scrolling (a finger dragged on a list) ---------- */
@@ -569,6 +575,7 @@ mgu.run({
                 else if (pb.state === 'error') { msg = 'This channel did not play'; sub = pb.error || ''; }
                 else if (pb.state === 'loading') { msg = 'Tuning ' + short(ch.name) + '...'; sub = pb.error ? 'Reconnecting: ' + pb.error : ''; }
                 else if (!allowed) { msg = 'The picture shows while parked'; sub = 'The sound goes on. A passenger can watch while driving: Settings, Video while driving.'; }
+                else if (!pic && gpuVideo()) { msg = 'Starting the picture...'; sub = ''; }
                 else if (!pic) { msg = 'Waiting for the GPU renderer'; sub = 'Install a renderer from the Store (mgu-render), then restart the head unit.'; }
                 if (msg && !panel) {
                     cv.text(msg, W / 2, mid - 10, 34, C.text, Object.assign({ align: 'center' }, B));
