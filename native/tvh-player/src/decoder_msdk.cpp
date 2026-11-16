@@ -143,6 +143,7 @@ struct Decoder::State {
     bool open_session();
     void access_unit(const AccessUnit &au, const FrameSink &cb);
     bool start(const AccessUnit &au);
+    bool configure(const mfxVideoParam &hdr, int variant);
     void stop();
     Result decode(mfxBitstream *bs, const FrameSink &cb);
     bool convert(mfxFrameSurface1 *in, const FrameSink &cb);
@@ -263,24 +264,50 @@ bool Decoder::State::start(const AccessUnit &au)
     if (sts < MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoDECODE_DecodeHeader", sts));
 
-    /* amn-iptv: 10-bit HEVC. DecodeHeader names a P010 picture; Intel's hardware decoder writes each 10-bit sample in
-     * the high bits of its 16-bit word, which the surface has to say (Shift 1), and this MSDK can leave the bit depth
-     * and Shift unset. Without both, every frame of a Main 10 film failed (0.3.1 in the car: sound, no picture,
-     * "nothing decoded"). VPP then converts P010 to the 8-bit NV12 of the frame file (its output: 8 bits, Shift 0). */
-    {
-        mfxFrameInfo &fi = dec.mfx.FrameInfo;
-        const bool ten = fi.FourCC == kFourccP010 || fi.BitDepthLuma > 8 || fi.BitDepthChroma > 8 ||
-                         (hevc && dec.mfx.CodecProfile == kProfileHevcMain10);
-        if (ten) {
-            fi.FourCC = kFourccP010;
-            fi.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
-            if (fi.BitDepthLuma <= 8) fi.BitDepthLuma = 10;
-            if (fi.BitDepthChroma <= 8) fi.BitDepthChroma = fi.BitDepthLuma;
-            fi.Shift = 1;
-            fprintf(stderr, "tvh-player: video: %u-bit %ux%u (P010, MSB-aligned) to 8-bit NV12\n",
-                    (unsigned)fi.BitDepthLuma, (unsigned)fi.CropW, (unsigned)fi.CropH);
+    /* amn-iptv: 10-bit HEVC (Main 10: most 4K films). DecodeHeader names a P010 picture. 0.3.2 set it up one way
+     * (P010, MSB-aligned: Shift 1, VPP to 8-bit NV12) and the car still decoded nothing, its error unseen. 0.3.3
+     * tries each way this MSDK may want, every one on a fresh session (a failed Init leaves the session unsure),
+     * and if none starts, the error names every try: the screen then says what the hardware refused. */
+    const mfxVideoParam hdr = dec;
+    const mfxFrameInfo &hf = hdr.mfx.FrameInfo;
+    const bool ten = hf.FourCC == kFourccP010 || hf.BitDepthLuma > 8 || hf.BitDepthChroma > 8 ||
+                     (hevc && hdr.mfx.CodecProfile == kProfileHevcMain10);
+    if (!ten)
+        return configure(hdr, 0);
+    static const char *const kTries[] = {"P010 Shift 1", "P010 Shift 0", "as the header says"};
+    std::string tried;
+    for (int v = 1; v <= 3; v++) {
+        if (v > 1) {
+            stop();
+            if (!open_session())
+                return false;
         }
+        error.clear();
+        if (configure(hdr, v)) {
+            fprintf(stderr, "tvh-player: video: 10-bit %ux%u started (%s)\n", (unsigned)hf.CropW, (unsigned)hf.CropH, kTries[v - 1]);
+            return true;
+        }
+        fprintf(stderr, "tvh-player: video: 10-bit try %s: %s\n", kTries[v - 1], error.c_str());
+        tried += (tried.empty() ? "" : "; ") + std::string(kTries[v - 1]) + ": " + error;
     }
+    error.clear();
+    return fail("10-bit HEVC refused (" + tried + ")");
+}
+
+/* The decoder and VPP for one sequence, from DecodeHeader's parameters. variant (amn-iptv): 0 as they are (8-bit);
+ * a 10-bit picture 1: P010 with Shift 1 (Intel's MSB alignment), 2: P010 with Shift 0, 3: as DecodeHeader gave it. */
+bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
+{
+    dec = hdr;
+    if (variant == 1 || variant == 2) {
+        mfxFrameInfo &fi = dec.mfx.FrameInfo;
+        fi.FourCC = kFourccP010;
+        fi.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
+        if (fi.BitDepthLuma <= 8) fi.BitDepthLuma = 10;
+        if (fi.BitDepthChroma <= 8) fi.BitDepthChroma = fi.BitDepthLuma;
+        fi.Shift = variant == 1 ? 1 : 0;
+    }
+    mfxStatus sts;
 
     /* One frame in flight: lowest latency. */
     dec.AsyncDepth = 1;

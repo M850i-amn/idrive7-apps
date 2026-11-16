@@ -493,6 +493,7 @@ void video_thread() {
     g_prebuffered = true;
     bool lastLate = false;
     unsigned long long errors = 0;
+    bool said = false;   /* the decoder's start failure sent as an event */
     auto show = [&](double pts, const woc::VideoFrame *f) {
         if (!g_clock.started()) g_clock.start(pts);
         if (!f || !f->y) {   /* decoded without a picture (it was late) */
@@ -537,6 +538,12 @@ void video_thread() {
         if (!ok) {
             s_decerr++;
             if (++errors <= 3 || errors % 100 == 0) fprintf(stderr, "tvh-player: video: %s\n", err.c_str());
+            /* amn-iptv 0.3.3: a sequence that does not start (no picture can follow) is said on the screen, once,
+               in the decoder's own words - 0.3.2 only counted it ("nothing decoded, 4 decode errors") */
+            if (!dec.decoding() && !said && s_shown.load() == 0) {
+                said = true;
+                event("{\"ev\":\"decoder\",\"ok\":false,\"error\":\"%s\"}", js(err).c_str());
+            }
         }
         if (picture == false) lastLate = false;   /* try a picture again with the next one */
     }
