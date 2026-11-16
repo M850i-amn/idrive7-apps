@@ -193,6 +193,7 @@ function indexOf(kind, langs) {
                     const items = await (kind === 'series' ? xt.series(c.id) : xt.films(c.id));
                     items.forEach((x) => {
                         if (ix.items.size >= INDEX_MAX) return;
+                        if (langs !== 'all' && LANGS.is3D(x.name)) return;   // a 3D release: two pictures side by side
                         const name = titleOf(x.name);
                         ix.items.set(x.id, { id: x.id, name, key: name.toLowerCase(), poster: x.poster, year: x.year, rating: x.rating, ext: x.ext, hevc: !!x.hevc });
                     });

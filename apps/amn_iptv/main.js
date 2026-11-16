@@ -43,7 +43,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.2.4';
+const VERSION = '0.3.0';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -182,7 +182,9 @@ mgu.run({
                     lists[cat] = r.error ? { at: Date.now(), error: r.error, channels: [] } : { at: Date.now(), channels: r.channels || [] };
                 }, (e) => { lists[cat] = { at: Date.now(), error: e.message, channels: [] }; });
             }
-            const shownList = (list) => (settingsGet('hevc') ? list : list.filter((c) => !c.hevc));
+            const shownList = (list) => (settingsGet('hevc') !== false ? list : list.filter((c) => !c.hevc));
+            // films and series: no 3D release (two pictures side by side) while the language filter is on
+            const vodShown = (list) => (langSet() === 'all' ? list : list.filter((it) => !LANGS.is3D(it.name)));
             // what is on now: the ids drawn this frame, asked in one go every 1.5 s
             let nowBusy = false;
             setInterval(guard('now', () => {
@@ -501,7 +503,7 @@ mgu.run({
                 cv.noclip();
                 // the category's posters
                 const gx = x0 + colW + 18, gw = A.right - gx, pw = POSTER.grid[0], ph = POSTER.grid[1];
-                const L = loadVodList(kind, v.sel), items = L ? L.items : [];
+                const L = loadVodList(kind, v.sel), items = L ? vodShown(L.items) : [];
                 const cw = pw + 18, chH = ph + 58, cols = Math.max(1, Math.floor((gw + 18) / cw));
                 const rowsV = Math.ceil((A.bottom - top) / chH) + 1, maxS = Math.max(0, Math.ceil(items.length / cols) * chH - (A.bottom - top));
                 scroll.vgrid = Math.min(scroll.vgrid, maxS);
@@ -520,7 +522,7 @@ mgu.run({
                         const rk = kind === 'movies' && resume['movie:' + it.id];
                         if (rk && rk.dur) { cv.fillRect(x, y + ph - 6, pw, 6, A_('#000000', 0.6)); cv.fillRect(x, y + ph - 6, Math.max(4, Math.round(pw * Math.min(1, rk.pos / rk.dur))), 6, C.accent); }
                         cv.text(fit(cv, it.name, 16, pw, B), x, y + ph + 24, 16, C.text, B);
-                        const sub = [it.year, it.rating ? Number(it.rating).toFixed(1) : null, it.hevc ? 'HEVC' : null].filter(Boolean).join('  ·  ');
+                        const sub = [it.year, it.rating ? Number(it.rating).toFixed(1) : null, it.hevc ? '4K / HEVC' : null].filter(Boolean).join('  ·  ');
                         if (sub) cv.text(fit(cv, sub, 14, pw, M), x, y + ph + 44, 14, C.grey, M);
                         btn(cv, 'vod_' + it.id, x, y, pw, ph + 48, () => openDetail(kind, it), 10);
                     }
@@ -552,7 +554,8 @@ mgu.run({
                 } else drawEpisodes(cv, A, d, tx, by);
             }
             function drawPlayRow(cv, f, hevc, x, y) {
-                if (hevc) { cv.text('This one is in HEVC (H.265): the head unit cannot play it yet.', x, y + 30, 19, C.amber, M); return; }
+                // HEVC plays on the unit's HEVC decoder (IPTV service 0.3.0); a 10-bit (HDR) one may not: the player says so
+                if (hevc) cv.text('4K / HEVC', x, y - 10, 16, C.amber, B);
                 const r = resume[f.key];
                 const list = r && r.pos > 30 ? [['Resume from ' + hms(r.pos), () => playFilm(f, r.pos), true], ['Start over', () => playFilm(f, 0), false]]
                     : [['Play', () => playFilm(f, 0), true]];
@@ -589,9 +592,9 @@ mgu.run({
                     cv.roundRect(x, yy, w, rowH - 8, 14, A_('#ffffff', 0.06));
                     cv.text(String(n), x + 34, yy + 36, 20, C.accent, Object.assign({ align: 'center' }, B));
                     cv.text(fit(cv, e.title || 'Episode ' + n, 19, w - 120, B), x + 70, yy + 26, 19, C.text, B);
-                    const sub = [e.duration ? dur(e.duration) : null, e.hevc ? 'HEVC (H.265): cannot play yet' : null, r && r.pos > 30 ? 'stopped at ' + hms(r.pos) : null].filter(Boolean).join('   ·   ');
+                    const sub = [e.duration ? dur(e.duration) : null, e.hevc ? '4K / HEVC' : null, r && r.pos > 30 ? 'stopped at ' + hms(r.pos) : null].filter(Boolean).join('   ·   ');
                     if (sub) cv.text(fit(cv, sub, 15, w - 120, M), x + 70, yy + 48, 15, e.hevc ? C.amber : C.grey, M);
-                    if (!e.hevc) {
+                    {
                         const f = { kind: 'series', id: e.id, ext: e.ext, name: sname + '  S' + season.n + ' E' + n, duration: e.duration || null, key, series: d.item.id, poster: d.item.poster };
                         btn(cv, 'ep_' + e.id, x, yy, w, rowH - 8, () => playFilm(f, r && r.pos > 30 ? r.pos : 0), 14);
                     }
@@ -859,7 +862,7 @@ mgu.run({
                 const kbW = Math.min(720, Math.round((right - x0) * 0.52)), rx = x0 + kbW + 20, rw = right - rx, ry = y + h + 18;
                 const res = search.results, vodMode = search.mode !== 'channels';
                 const catOK = (c) => { const k = cats.filter((x) => x.id === c.cat)[0]; return !k || langOK(k.name); };
-                const list = res ? (vodMode ? res.items : shownList(res.channels).filter(catOK)) : [];
+                const list = res ? (vodMode ? vodShown(res.items) : shownList(res.channels).filter(catOK)) : [];
                 const what = { channels: 'channel', movies: 'movie', series: 'series' }[search.mode];
                 const prog = res && res.progress;
                 if (search.busy && !(res && res.items && res.items.length)) cv.text(prog ? 'Searching...' : 'Searching every ' + what + '...', rx, ry + 30, 18, C.grey, M);
@@ -906,7 +909,7 @@ mgu.run({
                     posterAt(cv, kind, it, rx, yy, POSTER.result);
                     glass(cv, rx + pw + 10, yy, rw - pw - 10, ph, 14);
                     cv.text(fit(cv, it.name, 20, rw - pw - 50, B), rx + pw + 30, yy + 40, 20, C.text, B);
-                    const sub = [it.year, it.rating ? Number(it.rating).toFixed(1) : null, it.hevc ? 'HEVC' : null].filter(Boolean).join('  ·  ');
+                    const sub = [it.year, it.rating ? Number(it.rating).toFixed(1) : null, it.hevc ? '4K / HEVC' : null].filter(Boolean).join('  ·  ');
                     if (sub) cv.text(sub, rx + pw + 30, yy + 68, 16, C.grey, M);
                     btn(cv, 'vres_' + it.id, rx, yy, rw, ph, () => openDetail(kind, it), 14);
                 });

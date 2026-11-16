@@ -7,6 +7,7 @@
  *
  *   langOf(name)        'en' | 'fr' | 'ar' | 'other' | null (nothing recognised)
  *   kept(name, set)     set: 'efa' (English, French, Arabic), 'ef' (English and French), 'all'
+ *   is3D(name)          a 3D release (3D, SBS, HSBS): two pictures side by side on a flat screen; hidden with the filter on
  *   latin(name)         Arabic words of a category's name in English ("AR ✪ اجنبي رعب" -> "AR ✪ Foreign Horror"): the
  *                       app's fonts have no Arabic, so those names were blank. Every word the owner's provider uses.
  *
@@ -70,11 +71,13 @@ function langOf(name) {
     for (let i = 0; i < t.length; i++) if (BY_WORD[t[i]]) return BY_WORD[t[i]];
     return null;
 }
+function is3D(name) { return tokens(name).some((t) => t === '3D' || t === 'SBS' || t === 'HSBS' || t === '3DSBS'); }
 function kept(name, set) {
     const want = SETS[set];
     if (!want) return true;
+    if (is3D(name)) return false;
     const l = langOf(name);
     return l === null || want.indexOf(l) >= 0;
 }
 
-module.exports = { langOf, kept, latin, SETS };
+module.exports = { langOf, kept, is3D, latin, SETS };

@@ -46,7 +46,7 @@ was, 3 times in 2 minutes. The app keeps where each film and episode stopped.
 
 ## What plays
 
-`tvh-player` takes H.264 video with AAC, AC-3, E-AC-3, MP2 or MP3 sound; live TV as MPEG-TS, films as MP4, MKV or
+`tvh-player` takes H.264 or HEVC video (HEVC on the unit's own HEVC decoder plugin, from 0.3.0) with AAC, AC-3, E-AC-3, MP2 or MP3 sound; live TV as MPEG-TS, films as MP4, MKV or
 MPEG-TS. It is built from `../tvh-player` by `.github/workflows/tvh-player.yml` (GitHub Actions), which also plays
 test films and a live stream with it; the binary here is that run's artifact, its sha256 in the commit that added it. Channels in HEVC (H.265, usually labelled 4K, UHD
 or HEVC) do not play; the service flags them (`hevc: true`) so the app can hide them. An account that allows one
