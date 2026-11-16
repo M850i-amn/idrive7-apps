@@ -41,7 +41,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.1.9';
+const VERSION = '0.1.10';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -298,7 +298,12 @@ mgu.run({
             const fv = createFullView({ RenderClient, Recorder: record.Recorder, appId: 'amn_iptv', log, W,
                 onTouch: onDrag, onCcu: () => { overlayUntil = Date.now() + 6000; } });
             // the player page, the app's page shown and in front (not under Settings, not left with HOME)
-            const fvWanted = () => page === 'player' && ui.isVisible('MAIN') && !ui.isVisible('SETTINGS') && (!ui.hasFocus || ui.hasFocus('MAIN'));
+            // full screen or the app's page: the player's toggle (its top bar), kept across runs
+            const FULL_FILE = path.join(ctx.dataDir, 'fullscreen.json');
+            let fullOn = true;
+            try { fullOn = JSON.parse(fs.readFileSync(FULL_FILE, 'utf8')).on !== false; } catch (e) { /* first run: full screen */ }
+            function setFull(on) { fullOn = !!on; try { fs.writeFileSync(FULL_FILE, JSON.stringify({ on: fullOn })); } catch (e) { /* kept for this run */ } }
+            const fvWanted = () => fullOn && page === 'player' && ui.isVisible('MAIN') && !ui.isVisible('SETTINGS') && (!ui.hasFocus || ui.hasFocus('MAIN'));
             // while the full view is up the page's own layer is hidden: mgu-render puts a layer on top when its connection
             // makes it, and the page's reconnects (the kit app sent back and forth) put it back over the picture, black,
             // with the kit's header; hidden, it also claims no touch. The kit shows it again on its own events only, so
@@ -624,6 +629,16 @@ mgu.run({
                 btn(cv, 'p_back', A.x, A.y, 56, 56, () => { page = 'home'; panel = null; }, 28);
                 cv.roundRect(A.right - 96, A.y + 6, 92, 42, 21, C.accent);
                 cv.text('LIVE', A.right - 50, A.y + 35, 20, C.text, Object.assign({ align: 'center' }, B));
+                // full screen <-> the app's page: four corner marks, pointing out (go full) or in (leave it)
+                const fx = A.right - 96 - 16 - 56, fy = A.y;
+                cv.roundRect(fx, fy, 56, 56, 28, A_('#ffffff', 0.18));
+                const inward = fullOn, c0 = 17, c1 = 9;
+                [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach((d) => {
+                    const cx = fx + 28 + d[0] * (inward ? c1 : c0), cy = fy + 28 + d[1] * (inward ? c1 : c0), k = inward ? 1 : -1;
+                    cv.line(cx, cy, cx + d[0] * 7 * k, cy, 3, C.text);
+                    cv.line(cx, cy, cx, cy + d[1] * 7 * k, 3, C.text);
+                });
+                btn(cv, 'p_full', fx, fy, 56, 56, () => { setFull(!fullOn); overlayUntil = Date.now() + 6000; }, 28);
                 // the bottom: the channel, the programme, the next, the actions
                 const by = fullH - 200;
                 cv.gradientRect(0, by - 60, W, fullH - by + 60, [[0, A_('#000000', 0)], [0.45, A_('#000000', 0.7)], [1, A_('#000000', 0.88)]]);
