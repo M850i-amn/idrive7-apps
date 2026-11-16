@@ -23,8 +23,7 @@ where only the system can read it. Sign out (Settings) deletes it. See `native/a
 
 The picture shows while parked (under 1 km/h and in P). **Settings > Video while driving** lets a passenger watch
 while driving; it is off by default, and in Quebec a driver may not have video in view. The sound plays either way.
-The steering wheel's skip changes the channel. Channels in HEVC / 4K do not play on the head unit and are hidden
-(a setting lists them).
+The steering wheel's skip changes the channel. 4K / HEVC channels and films play, 10-bit included (from 0.3.2); HDR films look flatter than on an HDR TV (no tone mapping).
 
 ## Screens
 
