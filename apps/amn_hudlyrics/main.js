@@ -37,7 +37,7 @@ const { HudClaim } = require('./kit/hud_claim');
 // 0.5.0: in Sport, Redline's Ramp tach (after the G80/G82 M3 / M4) on the HUD in place of the lyrics (hud/sport.js)
 const { SportHud } = require('./sport');
 
-const VERSION = '0.5.1';
+const VERSION = '0.5.2';
 const W = 1600, H = 520;
 const IFACES = [
     { iface: 'de.bmw.infotainment.a4a.carplay.CarPlayManager', instances: ['CarPlayManagerInst1'] },

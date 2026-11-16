@@ -675,7 +675,10 @@ def build(app_id, language='en'):
         layout, stream = start_widget_layout(spec['startWidget'])
         # image / imageSmall stay on the spec: the cells mgu.js writes at run time (big, and small when the layout has one)
         rt_spec['startWidget'] = dict(spec['startWidget'], built={'layout': layout, 'stream': stream})
-    json.dump(rt_spec, open(os.path.join(src, 'javascript', 'kit', 'app-spec.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
+    # amn: not app-spec.json - mgu-render takes any app with source/javascript/kit/app-spec.json for an idrive7-apps kit app
+    # and, while another renderer (idrive7-renderd) listens on the community socket, closes its connection to send it there
+    # (mgu-render src/kit.c): our apps need mgu-render (IPTV's video) and looped between the two (car, Nov 16)
+    json.dump(rt_spec, open(os.path.join(src, 'javascript', 'kit', 'amn-spec.json'), 'w', encoding='utf-8', newline='\n'), indent=1)
     locale = {'language': language, 'strings': load_locale(language)}
     if language == 'zh-CN':
         locale['credit'] = zh_credit()['corner']

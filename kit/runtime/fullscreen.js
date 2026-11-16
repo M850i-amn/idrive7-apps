@@ -124,7 +124,7 @@ function setup(ctx, opts) {
     let ids = o.hide;
     if (ids == null || ids === true) {
         let spec = null;
-        try { spec = require('./app-spec.json'); } catch (e) { spec = null; }
+        try { spec = require('./amn-spec.json'); } catch (e) { try { spec = require('./app-spec.json'); } catch (e2) { spec = null; } }
         const scr = spec && (spec.screens || []).find((x) => x.kind === 'canvas');
         ids = scr ? (scr.buttons || []).map((b) => b[0]) : [];
     }

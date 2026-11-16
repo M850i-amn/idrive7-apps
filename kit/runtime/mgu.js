@@ -27,7 +27,8 @@ const { HmiText } = require('./hmi-text');
 const { listSheet } = require('./sheet');
 
 const sdkLog = logging.getSDKLogger();
-const SPEC = JSON.parse(fs.readFileSync(path.join(__dirname, 'app-spec.json'), 'utf8'));
+// amn: amn-spec.json (kit/tools/build.py: not app-spec.json, which makes mgu-render send the app to another renderer)
+const SPEC = JSON.parse(fs.readFileSync(path.join(__dirname, fs.existsSync(path.join(__dirname, 'amn-spec.json')) ? 'amn-spec.json' : 'app-spec.json'), 'utf8'));
 
 /* ---------------- paths ---------------- */
 // cwd of an OAP app is oap_<uid>/data; source is oap_<uid>/source

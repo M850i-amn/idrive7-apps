@@ -26,7 +26,7 @@ const { Indicators } = require('./indicators');
 const { SidePanel, PW, PH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
