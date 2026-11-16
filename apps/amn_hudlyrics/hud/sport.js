@@ -164,16 +164,20 @@ class SportHud {
     redline() { const r = Number(this.settings.get('redlineRpm')); return r > 3000 ? r : 6500; }
     shiftAt() { const s = Number(this.settings.get('shiftRpm')); return s > 2000 ? Math.min(s, this.redline() - 100) : this.redline() - 300; }
     max() { return Math.ceil((this.redline() + 800) / 1000) * 1000; }
+    /** Redline's paused(): BMW has the HUD (its own content, or the mapping guard). */
+    paused() { return this.tDisabled || this.tState === 'parked' || this.tState === 'waiting' || this.tState === 'unavailable'; }
     /** The screen's status line: { kind, text }. */
     view() {
         if (this.settings.get('sportHud') === false) return { kind: 'off', text: 'Off in Settings' };
         if (this.err) return { kind: 'error', text: this.err.text };
-        if (Date.now() < this.test) return { kind: 'on', text: 'Test sweep on the HUD' };
-        if (this.mode === null) return { kind: 'wait', text: 'Waiting for the drive mode' };
-        if (this.mode !== 'sport') return { kind: 'off', text: 'Ready  ·  shows in Sport' };
-        if (!this.ready) return { kind: 'wait', text: 'Connecting' };
-        if (this.tState && this.tState !== 'shown') return { kind: 'wait', text: 'HUD ' + this.tState };
-        return { kind: 'on', text: 'Showing  ·  Ramp' };
+        const testing = Date.now() < this.test, pre = testing ? 'Test  ·  ' : '';
+        if (!testing && this.mode === null) return { kind: 'wait', text: 'Waiting for the drive mode' };
+        if (!testing && this.mode !== 'sport') return { kind: 'off', text: 'Ready  ·  shows in Sport' };
+        // 0.5.1: what the renderer says, so a photo of the screen tells why the HUD stays dark
+        if (!this.cr || !this.ready) return { kind: 'wait', text: pre + 'connecting to the Cluster renderer' };
+        if (this.lState === 'error') return { kind: 'error', text: pre + 'layer ' + this.lText };
+        if (this.paused() || (this.lState && this.lState !== 'shown')) return { kind: 'wait', text: pre + 'HUD ' + (this.tText || '?') + ' · layer ' + (this.lText || '?') };
+        return { kind: 'on', text: pre + 'Showing  ·  ' + this.sent + ' frames  ·  HUD ' + (this.tText || 'no state yet') };
     }
     demo(ms) { this.test = Date.now() + (ms || 8000); this.testAt = Date.now(); }
 
@@ -196,8 +200,21 @@ class SportHud {
         try { cr = this.cr = new c.ClusterRender(this.app + '-sport', c.sock); } catch (e) { this.err = { error: 'load', text: e.message }; this.errAt = now; this.cr = null; return; }
         cr.on('ready', () => { if (this.cr !== cr) return; this.ready = true; this.ref = 0; this.first = true; this.log.info('sport hud: connected'); });
         cr.on('disconnected', () => { if (this.cr !== cr) return; this.ready = false; this.ref = 0; this.downAt = Date.now(); });
-        cr.on('target', (name, state) => { if (this.cr !== cr || name !== 'hud') return; if (state !== this.tState) this.log.info('sport hud: hud ' + state); this.tState = state || ''; if (state === 'shown') this.first = true; });
-        cr.on('layer', (ref, state, reason) => { if (this.cr === cr && ref === this.ref && state === 'error') this.log.warn('sport hud: layer error ' + (reason || '')); });
+        // 0.5.1: as Redline's hud.js - the target's state with who holds it; drawing pauses only for the states where BMW
+        // has the HUD (paused()). 0.5.0 drew only once the state was 'shown', and in the car nothing ever showed.
+        cr.on('target', (name, state, holder, reason, guideDisabled, disabled) => {
+            if (this.cr !== cr || name !== 'hud') return;
+            const t = disabled ? 'disabled (mapping guard)' : (state || '?') + (holder ? ' behind ' + holder : '') + (reason ? ' (' + reason + ')' : '');
+            if (t !== this.tText) this.log.info('sport hud: hud target ' + t);
+            this.tText = t; this.tState = state || ''; this.tDisabled = !!disabled;
+            if (state === 'shown') this.first = true;
+        });
+        cr.on('layer', (ref, state, reason) => {
+            if (this.cr !== cr || ref !== this.ref) return;
+            const t = (state || '?') + (reason ? ' (' + reason + ')' : '');
+            if (t !== this.lText) this.log.info('sport hud: layer ' + t);
+            this.lText = t; this.lState = state || '';
+        });
         cr.on('refused', (op, ref, reason) => { if (this.cr === cr) this.log.warn('sport hud: refused ' + op + ': ' + reason); });
         this.downAt = now;
         try { cr.connect(); } catch (e) { this.log.warn('sport hud: connect ' + e.message); }
@@ -240,12 +257,14 @@ class SportHud {
             return;
         }
         if (!this.ref) {
-            this.ref = this.cr.image({ target: 'hud', klass: 'content', z: 10, x: PLACE.x, y: PLACE.y, w: IW, h: IH, iw: IW, ih: IH, fps: FPS, sampling: 'nearest', contend: true });
+            // 0.5.1: Redline's own tach layer (hud.js makeLayer): class overlay, z 0, bilinear
+            this.ref = this.cr.image({ target: 'hud', klass: 'overlay', z: 0, x: PLACE.x, y: PLACE.y, w: IW, h: IH, iw: IW, ih: IH, fps: FPS, sampling: 'bilinear' });
+            this.lText = 'made'; this.lState = '';
             if (!this.ref) { this.log.warn('sport hud: layer refused by the client'); return; }
             this.first = true; this.lastKey = '';
             this.log.info('sport hud: layer ' + IW + 'x' + IH + ' at ' + PLACE.x + ',' + PLACE.y);
         }
-        if (this.tState && this.tState !== 'shown') { this.first = true; return; }        // behind BMW's own content
+        if (this.paused()) { this.first = true; return; }        // behind BMW's own content
         const now = Date.now(), f = this._frameData(now);
         const key = [Math.round((f.d.rpm || 0) / 25), f.d.gear, f.d.stage, f.blink, f.cue.shift, f.cue.limiter, f.mode, JSON.stringify(f.readouts)].join('|');
         if (!this.first && key === this.lastKey) return;
