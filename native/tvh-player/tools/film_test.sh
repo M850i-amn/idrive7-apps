@@ -19,7 +19,7 @@ play() {   # $1 name, then env assignments; stdin from $IN (or nothing)
         > "$t/$name.out" 2> "$t/$name.err" || true
     echo "== $name"; grep -E '"ev":"(open|error|end)"' "$t/$name.out" || true; grep '"ev":"tick"' "$t/$name.out" | tail -1
 }
-check() {   # $1 name, $2 min duration, $3 min first pos
+check() {   # $1 name, $2 min duration, $3 min first pos (a film starts on the key frame at or before its start: MKV cues may name the one before)
     python3 - "$t/$1.out" "$2" "$3" <<'PY'
 import json, sys
 ev = [json.loads(l[4:]) for l in open(sys.argv[1]) if l.startswith('MGU {')]
@@ -38,7 +38,7 @@ sys.exit(1 if fail else 0)
 PY
 }
 rc=0
-play mp4 MGU_INPUT_URL=http://127.0.0.1:8099/end.mp4 MGU_START_S=8; check mp4 19 7 || rc=1
-play mkv MGU_INPUT_URL=http://127.0.0.1:8099/film.mkv MGU_START_S=8; check mkv 19 7 || rc=1
+play mp4 MGU_INPUT_URL=http://127.0.0.1:8099/end.mp4 MGU_START_S=8; check mp4 19 5.5 || rc=1
+play mkv MGU_INPUT_URL=http://127.0.0.1:8099/film.mkv MGU_START_S=8; check mkv 19 5.5 || rc=1
 IN=/t/live.ts play live; check live 0 0 || rc=1
 exit $rc
