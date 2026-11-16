@@ -77,6 +77,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavcodec/bsf.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 }
@@ -251,6 +252,11 @@ double first_pts() { std::lock_guard<std::mutex> l(g_first_mu); return isnan(g_f
 
 /* ---------- video ---------- */
 bool g_video_off = false;
+/* a film (MGU_INPUT_URL): the IPTV service's own address for it on 127.0.0.1, opened in its own container (MP4, MKV,
+   TS) and read where the demuxer asks (an MP4's index may be at its end); MGU_START_S: where it starts (a skip or a
+   resume is a new player started there). Without it: live TV, MPEG-TS on stdin */
+const char *g_url = nullptr;
+double g_start = 0;
 ytdec::Mgvf g_mgvf;
 std::string g_video_path = "/dev/shm/mgu-video-aurelm-tvhplayer";
 uint32_t g_vw = 1920, g_vh = 1080, g_maxw = 1920, g_maxh = 1080;
@@ -888,9 +894,10 @@ void tick_thread() {
         for (int i = 0; i < 10 && !g_quit; i++) sleep_s(0.05);
         if (g_quit) break;
         const double t = g_clock.started() ? g_clock.now() - first_pts() : 0;
-        event("{\"ev\":\"tick\",\"t\":%.3f,\"state\":\"%s\",\"shown\":%llu,\"late\":%llu,\"decerr\":%llu,\"aplayed\":%llu,"
+        const double pos = g_clock.started() ? g_clock.now() : g_start;
+        event("{\"ev\":\"tick\",\"t\":%.3f,\"pos\":%.3f,\"state\":\"%s\",\"shown\":%llu,\"late\":%llu,\"decerr\":%llu,\"aplayed\":%llu,"
               "\"alate\":%llu,\"aunread\":%llu,\"axrun\":%llu,\"adev\":%d,\"buffered\":%.2f,\"kbytes\":%llu,\"fields\":%llu,\"subs\":%llu,\"subshown\":%llu,\"limited\":%llu,\"gain\":%.1f,\"even\":%d}",
-              t < 0 ? 0 : t, state(), s_shown.load(), s_late.load(), s_decerr.load(), s_aplayed.load(), s_alate.load(),
+              t < 0 ? 0 : t, pos < 0 ? 0 : pos, state(), s_shown.load(), s_late.load(), s_decerr.load(), s_aplayed.load(), s_alate.load(),
               s_aunread.load(), s_axrun.load(), s_adev_ms.load(), std::max(g_vq.span(), g_aq.span()), s_bytes.load() / 1024, s_fields.load(), s_subpages.load(), s_subshown.load(),
               s_limited.load(), g_gain_cdb.load() / 100.0, g_even.load() ? 1 : 0);
     }
@@ -972,6 +979,8 @@ int main() {
     if (const char *sb = getenv("MGU_SUBS")) if (!strcmp(sb, "0")) g_subs_on = false;
     if (const char *gd = getenv("MGU_GAIN_DB")) { const double db = atof(gd); g_gain_cdb = (int) lrint((db < 0 ? 0 : db > 15 ? 15 : db) * 100); }
     if (const char *ev = getenv("MGU_EVEN")) if (!strcmp(ev, "1")) g_even = true;
+    if (const char *u = getenv("MGU_INPUT_URL")) if (*u) g_url = u;
+    if (const char *s0 = getenv("MGU_START_S")) { const double v = atof(s0); if (v > 0 && v < 86400) g_start = v; }
     drop_root();
     std::thread(watchdog).detach();
     std::thread ctl;
@@ -981,18 +990,31 @@ int main() {
     av_log_set_level(AV_LOG_ERROR);
     AVFormatContext *fmt = avformat_alloc_context();
     const int iosz = 64 * 1024;
-    AVIOContext *io = avio_alloc_context((unsigned char *) av_malloc(iosz), iosz, 0, nullptr, read_stdin, nullptr, nullptr);
-    fmt->pb = io;
-    /* 1 MiB, 1 s: the server's transcoder may write its first sound after a good part of a second of picture (0.2.2
-     * in the car: 256 KiB found no sound in a DTS -> AAC stream); a sound that shows up later still is taken below */
-    fmt->probesize = 1024 * 1024;
-    if (const char *pk = getenv("MGU_PROBE_KB")) if (atoi(pk) >= 4) fmt->probesize = atoi(pk) * 1024;   /* tests */
-    /* live TV starts anywhere in a group of pictures: the analysis must reach the next key frame, with its SPS, to
-     * know the picture's size (Tvheadend's mgu-hd: one each second, the first 1.4 s in; 1 s found 0x0) */
-    fmt->max_analyze_duration = 2500000;
-    if (const char *am = getenv("MGU_ANALYZE_MS")) if (atoi(am) >= 100) fmt->max_analyze_duration = (int64_t) atoi(am) * 1000;
-    const AVInputFormat *ts = av_find_input_format("mpegts");
-    int rc = avformat_open_input(&fmt, nullptr, ts, nullptr);
+    AVIOContext *io = nullptr;
+    int rc;
+    if (g_url) {
+        /* a film: the whole file is there, so the analysis may read further than live TV's */
+        fmt->probesize = 5 * 1024 * 1024;
+        fmt->max_analyze_duration = 5000000;
+        AVDictionary *o = nullptr;
+        av_dict_set(&o, "protocol_whitelist", "http,tcp", 0);   /* the service's 127.0.0.1 address, nothing else */
+        av_dict_set(&o, "rw_timeout", "20000000", 0);
+        rc = avformat_open_input(&fmt, g_url, nullptr, &o);
+        av_dict_free(&o);
+    } else {
+        io = avio_alloc_context((unsigned char *) av_malloc(iosz), iosz, 0, nullptr, read_stdin, nullptr, nullptr);
+        fmt->pb = io;
+        /* 1 MiB, 1 s: the server's transcoder may write its first sound after a good part of a second of picture (0.2.2
+         * in the car: 256 KiB found no sound in a DTS -> AAC stream); a sound that shows up later still is taken below */
+        fmt->probesize = 1024 * 1024;
+        if (const char *pk = getenv("MGU_PROBE_KB")) if (atoi(pk) >= 4) fmt->probesize = atoi(pk) * 1024;   /* tests */
+        /* live TV starts anywhere in a group of pictures: the analysis must reach the next key frame, with its SPS, to
+         * know the picture's size (Tvheadend's mgu-hd: one each second, the first 1.4 s in; 1 s found 0x0) */
+        fmt->max_analyze_duration = 2500000;
+        if (const char *am = getenv("MGU_ANALYZE_MS")) if (atoi(am) >= 100) fmt->max_analyze_duration = (int64_t) atoi(am) * 1000;
+        const AVInputFormat *ts = av_find_input_format("mpegts");
+        rc = avformat_open_input(&fmt, nullptr, ts, nullptr);
+    }
     if (rc < 0 || avformat_find_stream_info(fmt, nullptr) < 0) {
         char e[128];
         av_strerror(rc, e, sizeof e);
@@ -1003,6 +1025,11 @@ int main() {
         fflush(stdout);
         fflush(stderr);
         _exit(2);
+    }
+    if (g_url && g_start > 0) {
+        /* the key frame at or before the start: the picture starts there, the clock with it */
+        const int64_t ts0 = (int64_t) (g_start * AV_TIME_BASE);
+        if (avformat_seek_file(fmt, -1, INT64_MIN, ts0, ts0, 0) < 0) fprintf(stderr, "tvh-player: no seek to %.1f s, from the start\n", g_start);
     }
     for (unsigned i = 0; i < fmt->nb_streams; i++) {
         const AVCodecParameters *cp = fmt->streams[i]->codecpar;
@@ -1021,7 +1048,7 @@ int main() {
         picture_size(vs->codecpar, av_guess_sample_aspect_ratio(fmt, vs, nullptr));
         fprintf(stderr, "tvh-player: the picture %ux%u\n", g_vw, g_vh);
     }
-    auto playable = [](AVCodecID id) { return id == AV_CODEC_ID_AAC || id == AV_CODEC_ID_AC3 || id == AV_CODEC_ID_EAC3; };
+    auto playable = [](AVCodecID id) { return id == AV_CODEC_ID_AAC || id == AV_CODEC_ID_AC3 || id == AV_CODEC_ID_EAC3 || id == AV_CODEC_ID_MP2 || id == AV_CODEC_ID_MP3; };
     if (as && !playable(as->codecpar->codec_id)) {
         /* "pass" from DVB: MP2 most often. Told, and a playable sound that shows up later is still taken. */
         event("{\"ev\":\"audio\",\"ok\":false,\"error\":\"sound %s: only AAC, AC-3 and E-AC-3 play here (choose a profile that transcodes)\"}",
@@ -1058,11 +1085,25 @@ int main() {
     };
     for (unsigned i = 0; i < fmt->nb_streams && !g_ss; i++)
         if (fmt->streams[i]->codecpar->codec_id == AV_CODEC_ID_DVB_SUBTITLE) open_subs(fmt->streams[i]);
-    event("{\"ev\":\"open\",\"video\":%s%s%s,\"audio\":%s%s%s}",
+    /* MP4 and MKV carry H.264 as length-prefixed NAL units with the SPS and PPS aside (avcC); the decoder reads
+       Annex B with them in line: h264_mp4toannexb (MPEG-TS is Annex B already) */
+    AVBSFContext *bsf = nullptr;
+    if (vs && vs->codecpar->extradata_size > 0 && vs->codecpar->extradata[0] == 1) {
+        const AVBitStreamFilter *f = av_bsf_get_by_name("h264_mp4toannexb");
+        bool ok = f && av_bsf_alloc(f, &bsf) >= 0 && avcodec_parameters_copy(bsf->par_in, vs->codecpar) >= 0;
+        if (ok) { bsf->time_base_in = vs->time_base; ok = av_bsf_init(bsf) >= 0; }
+        if (!ok) {
+            av_bsf_free(&bsf);
+            event("{\"ev\":\"error\",\"error\":\"the picture's H.264 framing (avcC) cannot be read here\"}");
+            g_quit = true;
+        }
+    }
+    event("{\"ev\":\"open\",\"video\":%s%s%s,\"audio\":%s%s%s,\"duration\":%.3f}",
           vs ? "{\"codec\":\"h264\",\"w\":" : "null", vs ? std::to_string(vs->codecpar->width).c_str() : "",
           vs ? (",\"h\":" + std::to_string(vs->codecpar->height) + vtail(vs)).c_str() : "",
           as ? "{\"codec\":\"" : "null", as ? avcodec_get_name(as->codecpar->codec_id) : "",
-          as ? ("\",\"rate\":" + std::to_string(as->codecpar->sample_rate) + ",\"channels\":" + std::to_string(as->codecpar->ch_layout.nb_channels) + "}").c_str() : "");
+          as ? ("\",\"rate\":" + std::to_string(as->codecpar->sample_rate) + ",\"channels\":" + std::to_string(as->codecpar->ch_layout.nb_channels) + "}").c_str() : "",
+          g_url && fmt->duration > 0 ? fmt->duration / (double) AV_TIME_BASE : 0.0);
     if (!g_has_video && !g_has_audio) {
         event("{\"ev\":\"error\",\"error\":\"no picture or sound in the stream\"}");
         g_quit = true;
@@ -1072,6 +1113,17 @@ int main() {
     /* no sound found yet: its queue stays open, a sound stream that shows up later is taken (below) */
     if (g_has_audio) at = std::thread(audio_thread);
 
+    auto queue = [&](AVStream *s, AVPacket *k) {
+        Packet p;
+        p.data.assign(k->data, k->data + k->size);
+        if (k->pts != AV_NOPTS_VALUE) p.pts = k->pts * av_q2d(s->time_base);
+        else if (k->dts != AV_NOPTS_VALUE) p.pts = k->dts * av_q2d(s->time_base);
+        p.dur = k->duration * av_q2d(s->time_base);
+        if (!isnan(p.pts) && (s == vs || !g_has_video)) note_first(p.pts);
+        if (s == vs) { s_vpk++; g_vq.push(std::move(p)); }
+        else { s_apk++; g_aq.push(std::move(p)); }
+        refill_check();
+    };
     AVPacket *pkt = av_packet_alloc();
     while (!g_quit) {
         if (!room()) break;
@@ -1098,20 +1150,14 @@ int main() {
                 avsubtitle_free(&sub);
             }
         }
-        if ((s == vs || s == as) && pkt->size > 0) {
-            Packet p;
-            p.data.assign(pkt->data, pkt->data + pkt->size);
-            if (pkt->pts != AV_NOPTS_VALUE) p.pts = pkt->pts * av_q2d(s->time_base);
-            else if (pkt->dts != AV_NOPTS_VALUE) p.pts = pkt->dts * av_q2d(s->time_base);
-            p.dur = pkt->duration * av_q2d(s->time_base);
-            if (!isnan(p.pts) && (s == vs || !g_has_video)) note_first(p.pts);
-            if (s == vs) { s_vpk++; g_vq.push(std::move(p)); }
-            else { s_apk++; g_aq.push(std::move(p)); }
-            refill_check();
-        }
+        if (s == vs && bsf && pkt->size > 0) {
+            if (av_bsf_send_packet(bsf, pkt) == 0)
+                while (av_bsf_receive_packet(bsf, pkt) == 0) { if (pkt->size > 0) queue(s, pkt); av_packet_unref(pkt); }
+        } else if ((s == vs || s == as) && pkt->size > 0) queue(s, pkt);
         av_packet_unref(pkt);
     }
     av_packet_free(&pkt);
+    av_bsf_free(&bsf);
     g_vq.end(); g_aq.end();
     if (g_clock.stalled()) g_clock.set_stalled(false);
     const double q0 = mono();

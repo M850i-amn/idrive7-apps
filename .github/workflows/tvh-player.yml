@@ -18,6 +18,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         run: sh native/tvh-player/build.sh
+      - name: Test films and live TV off the car
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          sh native/tvh-player/tools/film_test.sh
+      - name: Test logs
+        if: always()
+        run: for f in native/tvh-player/build/filmtest/*.err; do echo "== $f"; tail -15 "$f"; done || true
       - name: Fingerprint
         run: |
           cd native/tvh-player/build
