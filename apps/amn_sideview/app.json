@@ -2,7 +2,7 @@
   "id": "amn_sideview",
   "title": "Side View",
   "description": "The camera on the side you signal, on the instrument cluster: left signal, the left camera; right signal, the right camera; no signal, the front camera (a setting); hazards, nothing. It starts with the car and runs in the background. It reads the turn signals from the car's light module, asks the car's camera unit for that side's camera (as Drive Recorder does) and the Side View camera tool draws it in the cluster's centre. Needs a car with the 360 cameras (Surround View), and the Cluster renderer and Side View camera tools from the Store. Never covers the speed, the gear or the warning lamps. No internet.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "vendor": "amn",
   "requires": {
     "amn-sideview-cam": "0.2.0"
