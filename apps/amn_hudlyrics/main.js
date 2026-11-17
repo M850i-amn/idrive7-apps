@@ -37,7 +37,7 @@ const { HudClaim } = require('./kit/hud_claim');
 // 0.5.0: in Sport, Redline's Ramp tach (after the G80/G82 M3 / M4) on the HUD in place of the lyrics (hud/sport.js)
 const { SportHud } = require('./sport');
 
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 const W = 1600, H = 520;
 const IFACES = [
     { iface: 'de.bmw.infotainment.a4a.carplay.CarPlayManager', instances: ['CarPlayManagerInst1'] },
@@ -204,6 +204,8 @@ mgu.run({
             setInterval(guard('hud', hudTick), 250);
             settings.onChange(guard('settings', (k) => {
                 if (k === 'navShow') pushGuide();
+                // 0.6.1: a new size or place shows the tach there for 10 s, parked or in any mode, to judge it on the glass
+                if (k === 'sportSize' || k === 'sportX' || k === 'sportY') { sport.demo(10000); log.info('sport hud: ' + k + ' ' + settings.get(k)); }
                 if (k === 'hud') { log.info('hud: ' + (settings.get('hud') ? 'on' : 'off')); say(settings.get('hud') ? 'Lyrics in the HUD: on (experimental)' : 'Lyrics in the HUD: off'); }
                 hudTick();
             }));

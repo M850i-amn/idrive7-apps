@@ -101,6 +101,11 @@ Settings: **Sport mode: rev tach on the HUD** (on by default), **Shift lights fl
 lights count in over the 1,500 rpm before it) and **Redline** (6,500 rpm, where the limiter flash starts and the
 scale ends a little after). **Test Sport HUD** on the main screen plays an 8-second rev sweep on the HUD, parked.
 
+**Size and place** (0.6.1): Settings → *Sport HUD: size*, *left (-) / right (+)*, *up (-) / down (+)*, as Redline's
+HUD place settings. The default (-40 px, +50 px) centres the tach on the part of the glass the driver sees and sets it
+low, just above BMW's limit sign and speed; Redline's own 0 / 0 reads high and right. Each change shows the tach in its
+new place for 10 seconds, in any drive mode.
+
 The drawing is Redline's own (`hud/redline/`: hud-draw.js, hud-m.js and hud-theme.js from Redline 2.0.42,
 cauliflowermossgrape/idrive7-apps, MIT; HUD by @biscotit), copied unchanged; `hud/sport.js` feeds it from the car.
 If the Redline app itself is installed and holds the HUD, both the lyrics and this tach give way to it
