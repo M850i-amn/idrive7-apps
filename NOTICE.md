@@ -28,6 +28,5 @@ No BMW code or SDK is in this repository. `oap-sdk/` and `dist/` are never commi
 
 ## App icons (Nov 2026)
 
-The icons of HUD, IPTV and Side View are drawn by `tools/make_glass_icons.py` (outside this repository) with symbols
-from **Phosphor Icons** (github.com/phosphor-icons/core 2.1.1: gauge, monitor-play, car, caret-left, caret-right),
-MIT License, Copyright (c) 2023 Phosphor Icons.
+The icons of HUD, IPTV and Side View are drawn by `docs/make_icons.py` (our own marks, BMW-menu style with the M
+colours), no third-party artwork.
