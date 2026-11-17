@@ -17,6 +17,8 @@ const { loadClient } = require('./kit/cluster_render');
 
 const TARGET = 'map', MAP_W = 1088, MAP_H = 480;
 const PW = 760, PH = 420;                       // the panel, centred in the map area
+// 0.3.0: over the camera picture, only a badge in its top corner on the signalled side
+const BW = 230, BH = 64, BY = 52;
 const PX = Math.round((MAP_W - PW) / 2), PY = Math.round((MAP_H - PH) / 2);
 const KLASS = 'content', Z = 70;
 const RECONNECT_MS = 8000, LOAD_RETRY_MS = 30000;
@@ -38,9 +40,12 @@ class SidePanel {
         return { kind: 'on', text: this.side ? 'Showing ' + this.side : 'Ready' };
     }
 
-    /** side: 'left' | 'right' | null */
-    show(side) {
-        if (side === this.side && (side === null || this.ref)) return;
+    /** side: 'left' | 'right' | null; badge: the camera picture shows, so only the small badge */
+    show(side, badge) {
+        badge = !!badge;
+        if (side === this.side && badge === this.badge && (side === null || this.ref)) return;
+        if (badge !== this.badge && this.ref) { try { this.cr.drop(this.ref); } catch (e) { /* gone */ } this.ref = 0; this.drawn = null; }
+        this.badge = badge;
         this.side = side;
         if (!side) { this._visible(false); return; }
         if (!this.cr) this._connect();
@@ -76,15 +81,18 @@ class SidePanel {
 
     _apply() {
         if (!this.cr || !this.ready || !this.side) return;
+        const g = this.badge ? { x: this.side === 'left' ? 24 : MAP_W - 24 - BW, y: BY, w: BW, h: BH } : { x: PX, y: PY, w: PW, h: PH };
+        if (this.ref && this.badge && this.geomX !== g.x) { try { this.cr.drop(this.ref); } catch (e) { /* gone */ } this.ref = 0; this.drawn = null; }
         if (!this.ref) {
             const ref = this.cr.image({ target: TARGET, klass: KLASS, z: Z, exclusive: false, contend: true, visible: false,
-                x: PX, y: PY, w: PW, h: PH, iw: PW, ih: PH, sampling: 'nearest', fps: 4 });
+                x: g.x, y: g.y, w: g.w, h: g.h, iw: g.w, ih: g.h, sampling: 'nearest', fps: 4 });
+            this.geomX = g.x;
             if (!ref) { this.log.warn('cluster: image layer refused by the client'); return; }
             this.ref = ref; this.drawn = null;
-            this.log.info('cluster: layer ' + PW + 'x' + PH + ' at ' + PX + ',' + PY + ' on ' + TARGET);
+            this.log.info('cluster: layer ' + g.w + 'x' + g.h + ' at ' + g.x + ',' + g.y + ' on ' + TARGET + (this.badge ? ' (badge)' : ''));
         }
         if (this.drawn !== this.side) {
-            const img = this.draw(this.side);
+            const img = this.draw(this.side, this.badge);
             try { this.cr.pixels(this.ref, null, img.d); } catch (e) { this.log.warn('cluster: pixels ' + e.message); return; }
             this.drawn = this.side;
         }
@@ -102,4 +110,4 @@ class SidePanel {
     }
 }
 
-module.exports = { SidePanel, PW, PH, MAP_W, MAP_H };
+module.exports = { SidePanel, PW, PH, BW, BH, MAP_W, MAP_H };

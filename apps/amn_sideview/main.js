@@ -10,8 +10,10 @@
  * panel naming the side. The camera picture plugs into that layer once a source is found; "Camera check"
  * lists what the app can see of the unit's cameras toward that.
  *
- * Read-only toward the car: it subscribes to and reads Vehicle2 statusLightStatus, never calls a method or
- * writes a value. No internet. The log holds the light status values while teaching, and the layer's state.
+ * 0.3.0: the camera. While a side is signalled, the camera unit is asked for that side's camera (cam/camera.js:
+ * ICAM2Proxy changeState, Drive Recorder's view 3 left / 4 right) and the tool amn-sideview-cam draws its picture in
+ * the cluster's centre; the panel shrinks to a badge over it. Toward the car it reads the turn signals and asks the
+ * camera unit for a view (what Drive Recorder does); it writes no value and changes no setting. No internet.
  *
  * Node 8 only (the car's version): no ?. ?? import, object spread, class fields, optional catch binding.
  * Nothing may throw out of a callback: every callback goes through guard().
@@ -23,10 +25,11 @@ const { Canvas } = require('./kit/canvas');
 const { Turn, CAPTURE_MS } = require('./turn');
 // 0.2.0: the turn signals straight from the light module (de.bmw.body.Light); the taught light status is the fallback
 const { Indicators } = require('./indicators');
-const { SidePanel, PW, PH } = require('./sidepanel');
+const { SidePanel, PW, PH, BW, BH } = require('./sidepanel');
 const camprobe = require('./camprobe');
+const { Camera } = require('./camera');
 
-const VERSION = '0.2.1';
+const VERSION = '0.3.0';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
@@ -66,15 +69,28 @@ function arrow(cv, cx, cy, s, dir, c) {
     cv.quad([[base + dir * 1, cy - shaft / 2], [tail, cy - shaft / 2], [tail, cy + shaft / 2], [base + dir * 1, cy + shaft / 2]], c);
 }
 
-/** The cluster panel for a side (PW x PH, opaque RGBA). */
-function panelImage(side) {
-    const cv = new Canvas(PW, PH), dir = side === 'left' ? -1 : 1;
+/** The cluster panel for a side (PW x PH, opaque RGBA); badge: the small one over the camera picture (BW x BH). */
+let camText = 'Camera feed not connected yet';
+function panelImage(side, badge) {
+    const dir = side === 'left' ? -1 : 1;
+    if (badge) {
+        const bv = new Canvas(BW, BH);
+        bv.clear('#000000');
+        bv.card(0, 0, BW, BH, BH / 2, [[0, '#141b28'], [1, '#06080d']]);
+        bv.strokeRoundRect(1, 1, BW - 2, BH - 2, BH / 2 - 1, 2, A(C.accent, 0.7));
+        arrow(bv, side === 'left' ? 46 : BW - 46, BH / 2, 46, dir, C.accent);
+        bv.text(side === 'left' ? 'LEFT' : 'RIGHT', side === 'left' ? 84 : BW - 84, BH / 2 + 12, 32, C.text, { font: 'bold', align: side === 'left' ? 'left' : 'right', spacing: 2 });
+        const bd = Buffer.from(bv.d.buffer, bv.d.byteOffset, bv.d.length);
+        for (let i = 3; i < bd.length; i += 4) bd[i] = 255;
+        return { w: BW, h: BH, d: Buffer.from(bd) };
+    }
+    const cv = new Canvas(PW, PH);
     cv.clear('#000000');
     cv.card(0, 0, PW, PH, 36, [[0, '#141b28'], [1, '#06080d']]);
     cv.strokeRoundRect(1, 1, PW - 2, PH - 2, 35, 2, A(C.accent, 0.55));
     arrow(cv, PW / 2, 150, 200, dir, C.accent);
     cv.text(side === 'left' ? 'LEFT SIDE' : 'RIGHT SIDE', PW / 2, 300, 52, C.text, { font: 'bold', align: 'center', spacing: 3 });
-    cv.text('Camera feed not connected yet', PW / 2, 352, 26, C.dim, { font: 'label', align: 'center' });
+    cv.text(camText, PW / 2, 352, 26, C.dim, { font: 'label', align: 'center' });
     const d = Buffer.from(cv.d.buffer, cv.d.byteOffset, cv.d.length);
     for (let i = 3; i < d.length; i += 4) d[i] = 255;
     return { w: PW, h: PH, d: Buffer.from(d) };
@@ -137,6 +153,9 @@ mgu.run({
             /* ---------- the cluster ---------- */
             const panel = new SidePanel({ log: log, app: 'amn_sideview', draw: panelImage });
             const holdMs = () => Number(settings.get('hold')) || 1500;
+            const camOn = () => settings.get('camera') !== false;
+            const cam = new Camera({ ctx: ctx, log: log, enabled: camOn });
+            cam.start();
             let lastSide = null;
             setInterval(guard('tick', () => {
                 const now = Date.now();
@@ -149,9 +168,12 @@ mgu.run({
                 let side = settings.get('cluster') && ready() ? sideNow(now) : null;
                 if (test && now < test.until) side = test.side; else test = null;
                 if (side !== lastSide) { log.info('side: ' + (side || 'none')); lastSide = side; }
-                panel.show(side);
+                cam.set(side);
+                const nt = !camOn() ? 'Camera off in Settings' : cam.view().kind === 'error' ? cam.view().text : 'Camera starting...';
+                if (nt !== camText) { camText = nt; panel.drawn = null; }
+                panel.show(side, !!side && cam.showing());
             }), TICK_MS);
-            process.once('exit', () => { try { panel.close(); } catch (e) { /* closing */ } });
+            process.once('exit', () => { try { cam.close(); } catch (e) { /* closing */ } try { panel.close(); } catch (e) { /* closing */ } });
 
             /* ---------- the buttons ---------- */
             const teach = (which, label) => guard(which, () => {
@@ -167,8 +189,8 @@ mgu.run({
             ui.onClick('BTN_RIGHT', teach('right', 'Recording: keep the RIGHT signal on'));
             ui.onClick('BTN_TEST', guard('test', () => {
                 const now = Date.now(), side = test && test.side === 'left' ? 'right' : 'left';
-                test = { side: side, until: now + 4000 };
-                say('Cluster test: ' + side + ' for 4 s');
+                test = { side: side, until: now + 8000 };
+                say('Test: the ' + side + ' camera on the cluster for 8 s');
             }));
             ui.onClick('BTN_CAMS', guard('cams', () => {
                 if (page === 'cams') { page = 'main'; return; }
@@ -249,13 +271,13 @@ mgu.run({
             function camsCard(cv) {
                 const x = 600, y = 36, w = W - 48 - x, h = 372, ix = x + 36, iw = w - 72;
                 glass(cv, x, y, w, h, 28);
-                cv.text('CAR CHECK  ·  TURN SIGNAL AND CAMERAS', ix, y + 52, 14, C.blue, Object.assign({ spacing: 2.2 }, B));
+                cv.text('CAR CHECK  ·  CAMERA AND TURN SIGNAL', ix, y + 52, 14, C.blue, Object.assign({ spacing: 2.2 }, B));
                 const sg = sigs || camprobe.findSignals();
                 const L = [];
                 L.push(sg.error && !sg.hits.length ? 'Turn-signal fields: ' + sg.error : 'Turn-signal fields found: ' + sg.hits.length);
                 sg.hits.slice(0, 7).forEach((h2) => L.push('  ' + h2));
                 if (sg.hits.length > 7) L.push('  ... and ' + (sg.hits.length - 7) + ' more (in the log)');
-                camprobe.lines(cams || camprobe.probe()).slice(0, 3).forEach((l) => L.push(l));
+                L.unshift.apply(L, cam.lines());
                 L.slice(0, 11).forEach((l, k) => { const sub = l.charAt(0) === ' ', sz = sub ? 15 : 19; cv.text(fit(cv, l, sz, iw, M), ix, y + 90 + k * 23, sz, sub ? C.dim : C.text, M); });
                 wrap(cv, 'Send a photo of this page: it tells which signal carries the turn signals, and where the camera picture could come from. Tap Car check again to go back.', 16, iw, 2, M)
                     .forEach((r, k) => cv.text(r, ix, y + h - 40 + k * 22, 16, C.faint, M));
@@ -269,7 +291,7 @@ mgu.run({
                     D.live() ? ['TURN SIGNALS', 'green', 'From the car  ·  ' + D.n] :
                         ['TURN SIGNALS', T.ready() ? 'green' : T.base ? 'amber' : 'grey', T.ready() ? 'Learned' : T.base ? 'Half learned' : D.err ? 'Light module: ' + D.err : 'Signal once to start'],
                     ['CLUSTER', !settings.get('cluster') ? 'grey' : ({ on: 'green', wait: 'amber', off: 'grey', error: 'red' })[pv.kind] || 'grey', settings.get('cluster') ? pv.text : 'Off in Settings'],
-                    ['CAMERA', 'grey', 'Not connected yet  ·  ' + VERSION],
+                    (function () { const cv2 = cam.view(); return ['CAMERA  ·  ' + VERSION, ({ on: 'green', wait: 'amber', off: 'grey', error: 'red' })[cv2.kind] || 'grey', cv2.text]; })(),
                 ];
                 items.forEach((it, k) => {
                     const x = x0 + k * (w + gap);
