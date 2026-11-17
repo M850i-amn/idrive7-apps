@@ -54,22 +54,21 @@ L = 'fill="none" stroke="#fff" stroke-width="%d" stroke-linecap="round" stroke-l
 
 
 def a_hud():
-    cx, cy, r = 256, 292, 150
-    body = '<path d="%s" %s/>' % (arc(cx, cy, r, 160, 340), L)
-    # tick marks inside the arc, the last three in the M colours
-    for i, a in enumerate(range(160, 381, 22)):
-        col = '#fff' if a < 330 else (LBLUE, BLUE, RED)[min(2, (a - 330) // 22)]
-        rr0, rr1 = r - 30, r - (52 if i % 2 == 0 else 42)
+    cx, cy, r = 256, 300, 156
+    body = '<path d="%s" %s/>' % (arc(cx, cy, r, 160, 316), L)
+    # the speed line's end in the M colours: light blue, dark blue, red
+    for a0, a1, col in ((318, 338, LBLUE), (340, 360, BLUE), (362, 380, RED)):
+        body += '<path d="%s" fill="none" stroke="%s" stroke-width="%d" stroke-linecap="butt"/>' % (arc(cx, cy, r, a0, a1), col, SW + 4)
+    for i, a in enumerate(range(160, 317, 22)):
+        rr0, rr1 = r - 32, r - (54 if i % 2 == 0 else 44)
         ra = math.radians(a)
-        body += '<path d="M%.1f %.1f L%.1f %.1f" fill="none" stroke="%s" stroke-width="10" stroke-linecap="round"/>' % (
-            cx + rr0 * math.cos(ra), cy + rr0 * math.sin(ra), cx + rr1 * math.cos(ra), cy + rr1 * math.sin(ra), col)
-    body += '<path d="%s" fill="none" stroke="%s" stroke-width="%d" stroke-linecap="round"/>' % (arc(cx, cy, r, 346, 380), RED, SW)
-    a = math.radians(296)
-    body += '<path d="M%d %d L%.1f %.1f" fill="none" stroke="%s" stroke-width="11" stroke-linecap="round"/>' % (
-        cx, cy, cx + 128 * math.cos(a), cy + 128 * math.sin(a), RED)
-    body += '<circle cx="%d" cy="%d" r="16" fill="#fff"/>' % (cx, cy)
-    body += '<path d="M186 384 H326" %s/>' % L
-    body += m_stripes(256, 418, 132)
+        body += '<path d="M%.1f %.1f L%.1f %.1f" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"/>' % (
+            cx + rr0 * math.cos(ra), cy + rr0 * math.sin(ra), cx + rr1 * math.cos(ra), cy + rr1 * math.sin(ra))
+    a = math.radians(300)
+    body += '<path d="M%d %d L%.1f %.1f" fill="none" stroke="#fff" stroke-width="11" stroke-linecap="round"/>' % (
+        cx, cy, cx + 130 * math.cos(a), cy + 130 * math.sin(a))
+    body += '<circle cx="%d" cy="%d" r="17" fill="#fff"/>' % (cx, cy)
+    body += '<path d="M186 396 H326" %s/>' % L
     return svg(A_BG, body)
 
 
@@ -86,22 +85,34 @@ def m_stripes(x, y, w, h=18, gap=7, slant=0.45):
 
 
 def a_iptv():
-    body = '<rect x="106" y="122" width="300" height="204" rx="34" %s/>' % L
-    body += '<path d="M232 180 L302 224 L232 268 Z" fill="#fff" stroke="#fff" stroke-width="14" stroke-linejoin="round"/>'
-    body += m_stripes(256, 380, 150)
+    body = '<rect x="96" y="128" width="320" height="216" rx="36" %s/>' % L
+    body += '<path d="M206 400 H306" %s/>' % L
+    # the play button filled with the three M stripes, slanted
+    tri = 'M220 176 Q220 160 234 168 L318 222 Q330 236 318 250 L234 304 Q220 312 220 296 Z'
+    body += '<defs><clipPath id="play"><path d="%s"/></clipPath></defs><g clip-path="url(#play)">' % tri
+    # three bands top to bottom, tilted like the M logo's stripes; the middle one thinner (the triangle is widest there)
+    for (y0, y1, col) in ((150, 214, LBLUE), (214, 254, BLUE), (254, 330, RED)):
+        body += '<path d="M200 %d L350 %d L350 %d L200 %d Z" fill="%s"/>' % (y0 + 14, y0 - 14, y1 - 14, y1 + 14, col)
+    body += '</g>'
     return svg(A_BG, body)
 
 
 def a_side():
-    # the car from above: body with its front and rear screens and the two mirrors
-    body = '<path d="M216 112 Q256 92 296 112 Q316 124 316 160 V352 Q316 392 290 404 Q256 416 222 404 Q196 392 196 352 V160 Q196 124 216 112 Z" %s/>' % L
-    body += '<path d="M218 196 Q256 180 294 196" %s/><path d="M222 340 Q256 352 290 340" %s/>' % (L, L)
-    body += '<path d="M196 214 H176" %s/><path d="M316 214 H336" %s/>' % (L, L)
+    car = 'M216 112 Q256 92 296 112 Q316 124 316 160 V352 Q316 392 290 404 Q256 416 222 404 Q196 392 196 352 V160 Q196 124 216 112 Z'
+    # three M stripes down the middle, front to back, under the outline
+    body = '<defs><clipPath id="car"><path d="%s"/></clipPath></defs><g clip-path="url(#car)">' % car
+    for i, col in enumerate((LBLUE, BLUE, RED)):
+        x = 239 + i * 12
+        body += '<rect x="%d" y="96" width="10" height="320" fill="%s"/>' % (x, col)
+    body += '</g>'
+    body += '<path d="%s" %s/>' % (car, L)
+    body += '<path d="M214 198 Q256 180 298 198" fill="none" stroke="#11161c" stroke-width="26" stroke-linecap="round"/>'
+    body += '<path d="M218 340 Q256 354 294 340" fill="none" stroke="#11161c" stroke-width="22" stroke-linecap="round"/>'
+    body += '<path d="M214 198 Q256 180 298 198" %s/><path d="M218 340 Q256 354 294 340" %s/>' % (L, L)
+    body += '<path d="M196 216 H174" %s/><path d="M316 216 H338" %s/>' % (L, L)
     for s_ in (-1, 1):
-        x = 256 + s_ * 132
-        body += '<path d="M%d 222 L%d 260 L%d 298" fill="none" stroke="%s" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>' % (
-            x, x + s_ * 36, x, LBLUE)
-    body += m_stripes(256, 448, 110, 14, 6)
+        x = 256 + s_ * 134
+        body += '<path d="M%d 224 L%d 262 L%d 300" %s/>' % (x, x + s_ * 36, x, L)
     return svg(A_BG, body)
 
 
