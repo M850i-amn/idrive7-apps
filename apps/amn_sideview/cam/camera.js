@@ -25,6 +25,11 @@ const SOCK = process.env.SIDEVIEW_CAM_SOCK || '/dev/shm/amn-sideview-cam/ctl.soc
 const VIEW = { left: 3, right: 4, front: 1 };   // 0.3.1: front = the 360 system's front camera, without a signal
 const WIRE = { CLIENT_INDIRECT: 1, DR_STANDBY: 50, DR_ACTIVE: 51, MODE_MOSAIK: 50 };
 const RECONNECT_MS = 5000, ATTACH_RETRY_MS = 10000;
+// 0.5.1: every cookie this app holds, kept where a reinstall cannot take it: a Store update may put the app in a new
+// install folder (its data folder, with 0.4.1's cookie file, left behind), and the old claim then kept asking its view
+// (the cluster flickered between two views, and the centre screen showed the camera unit's mosaic). /dev/shm is
+// emptied only by a restart of the head unit, which is also when the camera unit forgets its clients.
+const SHM_COOKIES = process.env.SIDEVIEW_COOKIES || '/dev/shm/amn-sideview-cookies';
 // BMW's own camera screens (reverse, top / 360 view, side view, off-road, remote 3D): Side View never asks then
 const PARKING = /^(TOPREARVIEW|SIDEVIEW|RFK|OFFROAD|REMOTE360|1|2|3|20|60)$/;
 const errText = (e) => String(e && e.message || e).slice(0, 120);
@@ -37,7 +42,7 @@ class Camera {
         this.night = o.night || (() => false); this.sentLook = null;
         // 0.4.1: the cookie kept on disk, so a copy of the app stopped without giving the camera back (a Store update
         // kills it) has its attach given back by the next start: two clients asking two views made the cluster flicker
-        this.cookieFile = o.cookieFile || null; this.staleDone = !this.cookieFile;   // 0.4.0: the night look (black and white, bright highlights)
+        this.cookieFile = o.cookieFile || null; this.staleDone = false;   // 0.4.0: the night look (black and white, bright highlights)
         this.px = null; this.pxErr = null; this.cookie = null; this.attaching = false; this.attachErr = null; this.attachAt = 0;
         this.state = null; this.ready = null; this.stream = null;          // the camera unit's currentState / cameraProxyState / streamInfo
         this.want = null; this.asked = null; this.askErr = null;           // the side wanted, the one last asked of the unit
@@ -91,13 +96,10 @@ class Camera {
         if (this.sub && !this.sub.available) return;              // the camera unit not offering its service yet
         if (!this.staleDone) {
             this.staleDone = true;
-            let old = null;
-            try { old = Number(fs.readFileSync(this.cookieFile, 'utf8')); } catch (e) { /* none */ }
-            if (old > 0 || old === 0) {
+            const old = this._held();
+            if (old.length) {
                 this.attaching = true;
-                this.ctx.signals.call(this.px, 'clientDetach', { cookie: old }, 3000)
-                    .then(() => this.log.info('camera: the last start\'s cookie ' + old + ' given back'), (e) => this.log.info('camera: old cookie ' + old + ': ' + errText(e)))
-                    .then(() => { this.attaching = false; this._forget(); this._attach(); });
+                this._giveBack(old).then(() => { this.attaching = false; this._attach(); });
                 return;
             }
         }
@@ -106,7 +108,7 @@ class Camera {
         this._call('clientAttach', { type: 'CLIENT_INDIRECT' }, { type: WIRE.CLIENT_INDIRECT }).then((r) => {
             this.attaching = false;
             this.cookie = r && typeof r === 'object' ? r.cookie : r;
-            if (this.cookieFile) { try { fs.writeFileSync(this.cookieFile, String(this.cookie)); } catch (e) { /* kept in memory */ } }
+            this._hold(this.cookie, true);
             this.attachErr = null;
             this.log.info('camera: attached, cookie ' + this.cookie);
             this.asked = undefined;                              // ask again with the cookie
@@ -134,14 +136,40 @@ class Camera {
             this.log.warn('camera: changeState ' + this.askErr);
         });
     }
-    _forget() { if (this.cookieFile) { try { fs.unlinkSync(this.cookieFile); } catch (e) { /* none */ } } }
+    /** The cookies a copy of this app attached and did not give back (both files; 0.4.1's held one). */
+    _held() {
+        const out = [];
+        const add = (v) => { const n = Number(v); if (String(v).trim() !== '' && n >= 0 && n % 1 === 0 && out.indexOf(n) < 0) out.push(n); };
+        try { String(fs.readFileSync(SHM_COOKIES, 'utf8')).split(/[\s,]+/).forEach(add); } catch (e) { /* none */ }
+        if (this.cookieFile) { try { add(fs.readFileSync(this.cookieFile, 'utf8')); } catch (e) { /* none */ } }
+        return out;
+    }
+    /** Note a cookie as held (on) or given back (off), in both files. */
+    _hold(c, on) {
+        const list = this._held().filter((n) => n !== c).concat(on ? [c] : []);
+        try { fs.writeFileSync(SHM_COOKIES, list.join(' ') + '\n'); } catch (e) { /* /dev/shm not writable: the data folder only */ }
+        if (this.cookieFile) {
+            try { if (on) fs.writeFileSync(this.cookieFile, String(c)); else if (Number(fs.readFileSync(this.cookieFile, 'utf8')) === c) fs.unlinkSync(this.cookieFile); } catch (e) { /* none */ }
+        }
+    }
+    /** An earlier copy's claims: each first put on standby (a claim still asking a view is what flickers), then detached. */
+    _giveBack(cookies) {
+        return cookies.reduce((p, c) => p.then(() => {
+            const st = (a, m) => ({ cookie: c, desiredState: { application: a, mode: m, perspective: 1 } });
+            return this._call('changeState', st('DR_STANDBY', 'MODE_MOSAIK'), st(WIRE.DR_STANDBY, WIRE.MODE_MOSAIK))
+                .then(() => this.log.info('camera: earlier claim ' + c + ' put on standby'), (e) => this.log.info('camera: earlier claim ' + c + ' standby: ' + errText(e)))
+                .then(() => this.ctx.signals.call(this.px, 'clientDetach', { cookie: c }, 3000))
+                .then(() => this.log.info('camera: earlier claim ' + c + ' given back'), (e) => this.log.info('camera: earlier claim ' + c + ': ' + errText(e)))
+                .then(() => this._hold(c, false));
+        }), Promise.resolve());
+    }
     release() {
         this._send({ cmd: 'cluster', on: '0' });
         if (this.cookie === null || !this.px) return Promise.resolve();
         const c = this.cookie;
         this.cookie = null; this.asked = undefined;
         return this.ctx.signals.call(this.px, 'clientDetach', { cookie: c }, 3000)
-            .then(() => { this.log.info('camera: given back (cookie ' + c + ')'); this._forget(); }, (e) => this.log.warn('camera: detach ' + errText(e)));
+            .then(() => { this.log.info('camera: given back (cookie ' + c + ')'); this._hold(c, false); }, (e) => this.log.warn('camera: detach ' + errText(e)));
     }
 
     /* ---------- the tool's control socket ---------- */
@@ -218,10 +246,19 @@ class Camera {
             'Unit now: ' + (this.state || '-') + (this.stream ? ' · ' + this.stream : ''),
         ];
     }
-    close() {
+    /** Stop: the claim given back (standby first if a view is asked), the tool told. A promise, done in at most ms. */
+    close(ms) {
         if (this.timer) { clearInterval(this.timer); this.timer = null; }
-        try { this.release(); } catch (e) { /* stopping */ }
-        if (this.sock) { try { this.sock.destroy(); } catch (e) { /* closing */ } this.sock = null; }
+        let p = Promise.resolve();
+        if (this.cookie !== null && this.px && this.asked) {
+            const c = this.cookie, view = VIEW[this.asked] || 1;
+            const st = (a, m) => ({ cookie: c, desiredState: { application: a, mode: m, perspective: view } });
+            p = this._call('changeState', st('DR_STANDBY', 'MODE_MOSAIK'), st(WIRE.DR_STANDBY, WIRE.MODE_MOSAIK)).catch(() => null);
+        }
+        p = p.then(() => this.release()).catch(() => null).then(() => {
+            if (this.sock) { try { this.sock.destroy(); } catch (e) { /* closing */ } this.sock = null; }
+        });
+        return Promise.race([p, new Promise((r) => setTimeout(r, ms || 2000))]);
     }
 }
 

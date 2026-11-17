@@ -29,12 +29,14 @@ const { SidePanel, PW, PH, BW, BH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 const { Camera } = require('./camera');
 // 0.5.0: the screen in IPTV's design (full screen: its rail, pills and cards), Inter as in HUD and IPTV
+// 0.5.1: the camera claim survives no update: kept in /dev/shm, an earlier copy's put on standby and given back at
+// start, and given back on SIGTERM (the cluster flickered between two views after a Store update)
 const FS = require('./kit/fullscreen');
 const G = require('./kit/gauges');
 const fonts = require('./kit/fonts');
 const pack = require('./kit/pack');
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
@@ -182,6 +184,18 @@ mgu.run({
                 if (nt !== camText) { camText = nt; panel.drawn = null; }
                 panel.show(side, !!side && cam.showing());
             }), TICK_MS);
+            // 0.5.1: a Store update or the app manager stops the app with SIGTERM, which ends Node without its 'exit'
+            // work: the camera claim stayed asking its view. Give it back first (2 s at most), then end.
+            let stopping = false;
+            const stop = (why) => {
+                if (stopping) return; stopping = true;
+                log.info('stopping (' + why + '): giving the camera back');
+                try { panel.close(); } catch (e) { /* closing */ }
+                cam.close(2000).then(() => process.exit(0), () => process.exit(0));
+            };
+            process.once('SIGTERM', () => stop('SIGTERM'));
+            process.once('SIGINT', () => stop('SIGINT'));
+            process.once('SIGHUP', () => stop('SIGHUP'));
             process.once('exit', () => { try { cam.close(); } catch (e) { /* closing */ } try { panel.close(); } catch (e) { /* closing */ } });
 
             /* ---------- the buttons ---------- */
