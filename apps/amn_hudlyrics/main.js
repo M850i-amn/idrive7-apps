@@ -1,6 +1,6 @@
 'use strict';
 /**
- * HUD Lyrics (amn_hudlyrics): synced lyrics for the song the car plays (CarPlay), one line at a time in the
+ * HUD (amn_hudlyrics; "HUD Lyrics" until 0.7.0): synced lyrics for the song the car plays (CarPlay), one line at a time in the
  * head-up display, and a Now Playing page on the centre screen.
  *
  * The centre screen: the song and its progress on the left, the lyrics on the right (the line sung large,
@@ -37,7 +37,7 @@ const { HudClaim } = require('./kit/hud_claim');
 // 0.5.0: in Sport, Redline's Ramp tach (after the G80/G82 M3 / M4) on the HUD in place of the lyrics (hud/sport.js)
 const { SportHud } = require('./sport');
 
-const VERSION = '0.6.1';
+const VERSION = '0.7.0';
 const W = 1600, H = 520;
 const IFACES = [
     { iface: 'de.bmw.infotainment.a4a.carplay.CarPlayManager', instances: ['CarPlayManagerInst1'] },

@@ -25,3 +25,9 @@ IPTV (`apps/amn_iptv`, `native/amn-iptv`, `native/tvh-player`):
   `apps/amn_iptv/LICENSE.third-party`.
 
 No BMW code or SDK is in this repository. `oap-sdk/` and `dist/` are never committed.
+
+## App icons (Nov 2026)
+
+The icons of HUD, IPTV and Side View are drawn by `tools/make_glass_icons.py` (outside this repository) with symbols
+from **Phosphor Icons** (github.com/phosphor-icons/core 2.1.1: gauge, monitor-play, car, caret-left, caret-right),
+MIT License, Copyright (c) 2023 Phosphor Icons.

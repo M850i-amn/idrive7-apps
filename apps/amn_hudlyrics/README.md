@@ -1,4 +1,4 @@
-# HUD Lyrics
+# HUD
 
 Synced lyrics for the song playing over CarPlay (Apple Music, Spotify...), one line at a time in the
 head-up display, with a Now Playing page on the centre screen. iDrive 7 · package `amn_hudlyrics` · version 0.3.0.
@@ -30,7 +30,7 @@ next one dim below. Three lines: the line before dim above, the line sung white,
 new line all three slide up one place, as Apple Music scrolls its lyrics. It hides during route guidance (BMW navigation, CarPlay, Android Auto), when
 paused for 30 s, and for a song without synced lyrics.
 
-Only one app can draw in the HUD at a time: with HUD Lyrics on, other HUD apps (bimmer-lab HUD Widgets, G's Dash
+Only one app can draw in the HUD at a time: with HUD on, other HUD apps (bimmer-lab HUD Widgets, G's Dash
 HUD, Redline's HUD) wait, and the other way round. Needs the **Cluster renderer** tool from the Store. If a
 black box stays in the HUD after switching off or removing the app, restart the head unit (Store > Settings >
 Restart head unit).
