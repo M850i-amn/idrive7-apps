@@ -25,6 +25,11 @@ const SOCK = process.env.SIDEVIEW_CAM_SOCK || '/dev/shm/amn-sideview-cam/ctl.soc
 const VIEW = { left: 3, right: 4, front: 1 };   // 0.3.1: front = the 360 system's front camera, without a signal
 const WIRE = { CLIENT_INDIRECT: 1, DR_STANDBY: 50, DR_ACTIVE: 51, MODE_MOSAIK: 50 };
 const RECONNECT_MS = 5000, ATTACH_RETRY_MS = 10000;
+// 0.5.2: the camera unit confirms a view in about 0.1 s (currentState). It restarts itself when the car is switched
+// on (CAMERA_INITIALIZING, then DR_STANDBY / view 7, its rotating mosaic) and from then on ignored the claim made
+// before: the cluster showed the mosaic (the "flicker"). A view not confirmed in CONFIRM_MS is asked again; after
+// ASK_TRIES of those the claim is given back and a new one made.
+const CONFIRM_MS = 2000, ASK_TRIES = 2;
 // 0.5.1: every cookie this app holds, kept where a reinstall cannot take it: a Store update may put the app in a new
 // install folder (its data folder, with 0.4.1's cookie file, left behind), and the old claim then kept asking its view
 // (the cluster flickered between two views, and the centre screen showed the camera unit's mosaic). /dev/shm is
@@ -48,6 +53,7 @@ class Camera {
         this.want = null; this.asked = null; this.askErr = null;           // the side wanted, the one last asked of the unit
         this.sock = null; this.sockUp = false; this.buf = ''; this.tool = null; this.toolAt = 0; this.sockErr = null;
         this.onAt = 0;
+        this.askedAt = 0; this.askTries = 0; this.restarted = false;     // 0.5.2: the unit's confirmation of a view
     }
 
     start() {
@@ -57,7 +63,17 @@ class Camera {
         if (!sig || !sig.watch) { this.pxErr = 'no SOME/IP in this app'; return; }
         sig.watch(ICAM, '1', {
             currentState: (v) => { const s = this._fmt(v); if (s !== this.state) this.log.info('camera unit: ' + s); this.state = s; this.stateRaw = v; },
-            cameraProxyState: (v) => { const s = String(enumName(v)); if (s !== this.ready) this.log.info('camera unit state: ' + s); this.ready = s; },
+            cameraProxyState: (v) => {
+                const s = String(enumName(v));
+                if (s !== this.ready) {
+                    this.log.info('camera unit state: ' + s);
+                    // 0.5.2: the unit restarted (car switched on): what was asked before counts for nothing now
+                    if (/INITIALIZING|INHIBITED|INACTIVE/.test(s) && this.cookie !== null && this.asked) { this.restarted = true; this.log.info('camera unit restarted: asking again when ready'); }
+                    // a restart voids every claim (seen on the car Nov 17): a new one at once
+                    if (/READY/.test(s) && this.restarted) { this.restarted = false; this._reclaim('the unit restarted'); }
+                }
+                this.ready = s;
+            },
             streamInfo: (v) => { if (v && typeof v === 'object') this.stream = v.imageWidth + 'x' + v.imageHeight + ' ' + v.framesPerSecond + ' fps'; },
         }, this.log, { pollMs: 2000 }).then((r) => {
             if (r.error || !r.proxy) { this.pxErr = r.error || 'not available'; this.log.warn('camera unit: ' + this.pxErr); return; }
@@ -128,13 +144,42 @@ class Camera {
         const st = (a, m) => ({ cookie: this.cookie, desiredState: { application: a, mode: m, perspective: view } });
         this.asking = true;
         this._call('changeState', st(app, 'MODE_MOSAIK'), st(WIRE[app], WIRE.MODE_MOSAIK)).then(() => {
-            this.asking = false; this.asked = want; this.askErr = null;
+            this.asking = false; this.asked = want; this.askErr = null; this.askedAt = Date.now();
             this.log.info('camera: asked ' + app + ' / MODE_MOSAIK / ' + view);
             if (this.want !== want) this._ask();
         }, (e) => {
             this.asking = false; this.askErr = errText(e);
             this.log.warn('camera: changeState ' + this.askErr);
         });
+    }
+    /** The unit shows the view last asked (currentState: DR_ACTIVE and its perspective). */
+    _confirmed() {
+        const v = this.stateRaw;
+        if (!v || typeof v !== 'object' || !this.asked) return false;
+        return /^(DR_ACTIVE|51)$/.test(String(enumName(v.application))) && Number(v.perspective) === VIEW[this.asked];
+    }
+    /** 0.5.2: a view not confirmed in CONFIRM_MS is asked again; ASK_TRIES of those and the claim is made afresh. */
+    _confirm() {
+        if (!this.want || !this.asked || this.asked !== this.want || this.asking || this.cookie === null || this.restarted || this.parking()) return;
+        if (this._confirmed()) { this.askTries = 0; return; }
+        if (Date.now() - this.askedAt < CONFIRM_MS) return;
+        this.askTries = (this.askTries || 0) + 1;
+        if (this.askTries <= ASK_TRIES) {
+            this.log.info('camera: ' + this.asked + ' not confirmed by the unit (it shows ' + this.state + '): asking again');
+            this.asked = undefined; this._ask();
+            return;
+        }
+        this._reclaim('the unit ignores it');
+    }
+    /** Give the claim back and make a new one (then the wanted view is asked with it). */
+    _reclaim(why) {
+        this.askTries = 0;
+        if (this.cookie === null || this.attaching) return;
+        const c = this.cookie;
+        this.log.info('camera: claim ' + c + ' made afresh (' + why + ')');
+        this.cookie = null; this.asked = undefined;
+        this.attaching = true;
+        this._giveBack([c]).then(() => { this.attaching = false; this.attachErr = null; this._attach(); });
     }
     /** The cookies a copy of this app attached and did not give back (both files; 0.4.1's held one). */
     _held() {
@@ -214,7 +259,7 @@ class Camera {
         if (!this.sock && Date.now() - (this.sockTry || 0) > RECONNECT_MS) { this.sockTry = Date.now(); this._connect(); }
         const look = this.night() ? '1' : '0';
         if (this.sockUp && look !== this.sentLook && this._send({ cmd: 'look', on: look })) { this.sentLook = look; this.log.info('camera: look ' + (look === '1' ? 'night' : 'normal')); }
-        if (this.enabled()) { this._attach(); this._ask(); }
+        if (this.enabled()) { this._attach(); this._ask(); this._confirm(); }
         else if (this.cookie !== null) this.release();
     }
 
