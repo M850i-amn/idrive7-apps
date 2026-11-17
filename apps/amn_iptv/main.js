@@ -43,12 +43,13 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.3.9';
+const VERSION = '0.4.0';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
     bg: '#000000', card: '#1c1c1e', pill: '#26262a', rail: '#161618', text: '#ffffff', grey: '#98989f', dim: '#636366',
-    accent: '#ef4a2c', accentDim: '#3a1a14', navy: '#1e2c3e', navyText: '#bfcadb', green: '#30d158', amber: '#ff9f0a', red: '#ff453a',
+    accent: '#2f7df6', accentDim: '#0f2340',      // 0.4.0: the apps' one accent, BMW M blue (was UHF's orange)
+    navy: '#1e2c3e', navyText: '#bfcadb', green: '#30d158', amber: '#ff9f0a', red: '#ff453a',
 };
 const PLATE = { card: [236, 112], guide: [150, 70], player: [190, 104] };
 const LOGO_SLOTS = 40, LOGO_ID0 = 200;   // mgu-render: 64 pictures per app at most, the kit's own among them
@@ -681,11 +682,8 @@ mgu.run({
             }
             function topBar(cv, A, x0) {
                 const y = A.y, h = 52;
-                cv.roundRect(x0, y, 210, h, h / 2, C.pill);
-                cv.circle(x0 + 30, y + h / 2, 17, C.accent);
-                [-5, 4].forEach((o) => { cv.line(x0 + 26 + o, y + h / 2 - 7, x0 + 33 + o, y + h / 2, 2.6, C.text); cv.line(x0 + 33 + o, y + h / 2, x0 + 26 + o, y + h / 2 + 7, 2.6, C.text); });
-                cv.text('Main', x0 + 58, y + h / 2 + 11, 30, C.text, B);
-                const sx = x0 + 228, sw = Math.min(560, A.right - sx - 10);
+                // 0.4.0: no title pill (UHF's named the playlist; the car's header names the app): the search first
+                const sx = x0, sw = Math.min(560, A.right - sx - 10);
                 cv.roundRect(sx, y, sw, h, h / 2, C.pill);
                 icon(cv, 'search', sx + 30, y + h / 2, C.grey);
                 cv.text('Search channels', sx + 56, y + h / 2 + 8, 22, '#7a7a82', M);

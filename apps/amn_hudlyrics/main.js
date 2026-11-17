@@ -264,11 +264,7 @@ mgu.run({
             }
             function topBar(cv, Ar, x0) {
                 const y = Ar.y, h = 52;
-                cv.roundRect(x0, y, 160, h, h / 2, C.pill);
-                cv.circle(x0 + 30, y + h / 2, 17, C.accent);
-                icon(cv, 'sport', x0 + 30, y + h / 2 - 2, C.text);
-                cv.text('HUD', x0 + 58, y + h / 2 + 11, 30, C.text, B);
-                let x = x0 + 178;
+                let x = x0;                               // no title pill: the car's header names the app
                 x += toggle(cv, 'tg_lyrics', x, y, 'Lyrics on the HUD', !!settings.get('hud'), () => settings.set('hud', !settings.get('hud'))) + 14;
                 x += toggle(cv, 'tg_sport', x, y, 'Sport HUD', settings.get('sportHud') !== false, () => settings.set('sportHud', settings.get('sportHud') === false)) + 14;
                 const m = sport.driveMode ? sport.driveMode() : null, mw = 200;

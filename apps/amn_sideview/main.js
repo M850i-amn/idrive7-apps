@@ -44,7 +44,7 @@ const TICK_MS = 100;              // the side decided this often
 const C = {
     bg: '#000000', card: '#1c1c1e', pill: '#26262a', rail: '#161618',
     text: '#ffffff', dim: '#98989f', faint: '#636366',
-    accent: '#ff9f0a', accentDim: '#3a2606',     // the turn signal's amber
+    accent: '#2f7df6', accentDim: '#0f2340',     // 0.5.0: the apps' one accent, BMW M blue (the turn signals stay amber)
     mLight: '#5fb4ff', mDark: '#1c69d4', mRed: '#e2001a',
     green: '#30d158', amber: '#ff9f0a', red: '#ff453a', grey: '#636366', blue: '#64d2ff',
 };
@@ -83,8 +83,8 @@ function panelImage(side, badge) {
         const bv = new Canvas(BW, BH);
         bv.clear('#000000');
         bv.card(0, 0, BW, BH, BH / 2, [[0, '#141b28'], [1, '#06080d']]);
-        bv.strokeRoundRect(1, 1, BW - 2, BH - 2, BH / 2 - 1, 2, A(C.accent, 0.7));
-        arrow(bv, side === 'left' ? 46 : BW - 46, BH / 2, 46, dir, C.accent);
+        bv.strokeRoundRect(1, 1, BW - 2, BH - 2, BH / 2 - 1, 2, A(C.amber, 0.7));
+        arrow(bv, side === 'left' ? 46 : BW - 46, BH / 2, 46, dir, C.amber);
         bv.text(side === 'left' ? 'LEFT' : 'RIGHT', side === 'left' ? 84 : BW - 84, BH / 2 + 12, 32, C.text, { font: 'bold', align: side === 'left' ? 'left' : 'right', spacing: 2 });
         const bd = Buffer.from(bv.d.buffer, bv.d.byteOffset, bv.d.length);
         for (let i = 3; i < bd.length; i += 4) bd[i] = 255;
@@ -93,8 +93,8 @@ function panelImage(side, badge) {
     const cv = new Canvas(PW, PH);
     cv.clear('#000000');
     cv.card(0, 0, PW, PH, 36, [[0, '#141b28'], [1, '#06080d']]);
-    cv.strokeRoundRect(1, 1, PW - 2, PH - 2, 35, 2, A(C.accent, 0.55));
-    arrow(cv, PW / 2, 150, 200, dir, C.accent);
+    cv.strokeRoundRect(1, 1, PW - 2, PH - 2, 35, 2, A(C.amber, 0.55));
+    arrow(cv, PW / 2, 150, 200, dir, C.amber);
     cv.text(side === 'left' ? 'LEFT SIDE' : 'RIGHT SIDE', PW / 2, 300, 52, C.text, { font: 'bold', align: 'center', spacing: 3 });
     cv.text(camText, PW / 2, 352, 26, C.dim, { font: 'label', align: 'center' });
     const d = Buffer.from(cv.d.buffer, cv.d.byteOffset, cv.d.length);
@@ -269,12 +269,7 @@ mgu.run({
             }
             function topBar(cv, Ar, x0) {
                 const y = Ar.y, h = 52;
-                const tw = cv.textWidth('Side View', 30, B) + 82;
-                cv.roundRect(x0, y, tw, h, h / 2, C.pill);
-                cv.circle(x0 + 30, y + h / 2, 17, C.accent);
-                icon(cv, 'cameras', x0 + 30, y + h / 2, '#000000');
-                cv.text('Side View', x0 + 58, y + h / 2 + 11, 30, C.text, B);
-                let x = x0 + tw + 18;
+                let x = x0;                               // no title pill: the car's header names the app
                 x += toggle(cv, 'tg_cam', x, y, 'Camera', camOn(), () => settings.set('camera', !camOn())) + 14;
                 x += toggle(cv, 'tg_front', x, y, 'Front camera', settings.get('front') !== false, () => settings.set('front', settings.get('front') === false)) + 14;
                 toggle(cv, 'tg_night', x, y, 'Night look', settings.get('night') === true, () => settings.set('night', settings.get('night') !== true));
@@ -308,7 +303,7 @@ mgu.run({
                 cv.roundRect(mx + bw / 2 - 2, my - bh / 2 + 58, 18, 10, 4, '#2c2c30');
                 ['left', 'right'].forEach((s2) => {
                     const dir = s2 === 'left' ? -1 : 1, on = litNow(s2, now), held = showing === s2;
-                    arrow(cv, mx + dir * 150, my, 70, dir, on ? C.accent : held ? A(C.accent, 0.4) : A('#ffffff', 0.12));
+                    arrow(cv, mx + dir * 150, my, 70, dir, on ? C.amber : held ? A(C.amber, 0.4) : A('#ffffff', 0.12));
                 });
                 if (showing === 'front') { const ty = my - bh / 2 - 28; cv.line(mx - 22, ty + 14, mx, ty - 8, 6, C.text); cv.line(mx, ty - 8, mx + 22, ty + 14, 6, C.text); }
                 const label = !ready() ? 'Waiting for the turn signals' : hazards(now) ? 'Hazards: nothing shown' :
@@ -325,7 +320,7 @@ mgu.run({
                 [['left', 'Test left'], ['right', 'Test right']].forEach((t, k) => {
                     const bx = rx + k * (pw + 16);
                     cv.roundRect(bx, by, pw, 52, 26, k === 0 ? C.accent : C.pill);
-                    cv.text(t[1], bx + pw / 2, by + 33, 20, k === 0 ? '#000000' : C.text, Object.assign({ align: 'center' }, B));
+                    cv.text(t[1], bx + pw / 2, by + 33, 20, C.text, Object.assign({ align: 'center' }, B));
                     btn(cv, 'test_' + t[0], bx, by, pw, 52, () => testSide(t[0]), 26);
                 });
                 cv.text(fit(cv, 'Left signal: left camera  ·  right: right  ·  none: front  ·  hazards: nothing', 18, rw, M), rx, by + 88, 18, C.dim, M);
