@@ -18,6 +18,7 @@
  * Nothing throws out of here; every failure is a state the screen shows. Node 8.
  */
 const net = require('net');
+const fs = require('fs');
 
 const ICAM = 'de.bmw.infotainment.video.cameraproxy.ICAM2Proxy';
 const SOCK = process.env.SIDEVIEW_CAM_SOCK || '/dev/shm/amn-sideview-cam/ctl.sock';
@@ -33,7 +34,10 @@ class Camera {
     /** o: ctx (signals), log, enabled() -> bool */
     constructor(o) {
         this.ctx = o.ctx; this.log = o.log; this.enabled = o.enabled || (() => true);
-        this.night = o.night || (() => false); this.sentLook = null;   // 0.4.0: the night look (black and white, bright highlights)
+        this.night = o.night || (() => false); this.sentLook = null;
+        // 0.4.1: the cookie kept on disk, so a copy of the app stopped without giving the camera back (a Store update
+        // kills it) has its attach given back by the next start: two clients asking two views made the cluster flicker
+        this.cookieFile = o.cookieFile || null; this.staleDone = !this.cookieFile;   // 0.4.0: the night look (black and white, bright highlights)
         this.px = null; this.pxErr = null; this.cookie = null; this.attaching = false; this.attachErr = null; this.attachAt = 0;
         this.state = null; this.ready = null; this.stream = null;          // the camera unit's currentState / cameraProxyState / streamInfo
         this.want = null; this.asked = null; this.askErr = null;           // the side wanted, the one last asked of the unit
@@ -85,11 +89,24 @@ class Camera {
     _attach() {
         if (!this.px || this.cookie !== null || this.attaching || !this.enabled()) return;
         if (this.sub && !this.sub.available) return;              // the camera unit not offering its service yet
+        if (!this.staleDone) {
+            this.staleDone = true;
+            let old = null;
+            try { old = Number(fs.readFileSync(this.cookieFile, 'utf8')); } catch (e) { /* none */ }
+            if (old > 0 || old === 0) {
+                this.attaching = true;
+                this.ctx.signals.call(this.px, 'clientDetach', { cookie: old }, 3000)
+                    .then(() => this.log.info('camera: the last start\'s cookie ' + old + ' given back'), (e) => this.log.info('camera: old cookie ' + old + ': ' + errText(e)))
+                    .then(() => { this.attaching = false; this._forget(); this._attach(); });
+                return;
+            }
+        }
         if (this.attachErr && Date.now() - this.attachAt < ATTACH_RETRY_MS) return;
         this.attaching = true; this.attachAt = Date.now();
         this._call('clientAttach', { type: 'CLIENT_INDIRECT' }, { type: WIRE.CLIENT_INDIRECT }).then((r) => {
             this.attaching = false;
             this.cookie = r && typeof r === 'object' ? r.cookie : r;
+            if (this.cookieFile) { try { fs.writeFileSync(this.cookieFile, String(this.cookie)); } catch (e) { /* kept in memory */ } }
             this.attachErr = null;
             this.log.info('camera: attached, cookie ' + this.cookie);
             this.asked = undefined;                              // ask again with the cookie
@@ -117,13 +134,14 @@ class Camera {
             this.log.warn('camera: changeState ' + this.askErr);
         });
     }
+    _forget() { if (this.cookieFile) { try { fs.unlinkSync(this.cookieFile); } catch (e) { /* none */ } } }
     release() {
         this._send({ cmd: 'cluster', on: '0' });
         if (this.cookie === null || !this.px) return Promise.resolve();
         const c = this.cookie;
         this.cookie = null; this.asked = undefined;
         return this.ctx.signals.call(this.px, 'clientDetach', { cookie: c }, 3000)
-            .then(() => this.log.info('camera: given back (cookie ' + c + ')'), (e) => this.log.warn('camera: detach ' + errText(e)));
+            .then(() => { this.log.info('camera: given back (cookie ' + c + ')'); this._forget(); }, (e) => this.log.warn('camera: detach ' + errText(e)));
     }
 
     /* ---------- the tool's control socket ---------- */

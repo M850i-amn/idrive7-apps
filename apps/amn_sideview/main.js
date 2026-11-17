@@ -29,7 +29,7 @@ const { SidePanel, PW, PH, BW, BH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 const { Camera } = require('./camera');
 
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
@@ -154,7 +154,8 @@ mgu.run({
             const panel = new SidePanel({ log: log, app: 'amn_sideview', draw: panelImage });
             const holdMs = () => Number(settings.get('hold')) || 1500;
             const camOn = () => settings.get('camera') !== false;
-            const cam = new Camera({ ctx: ctx, log: log, enabled: camOn, night: () => settings.get('night') === true });
+            const cam = new Camera({ ctx: ctx, log: log, enabled: camOn, night: () => settings.get('night') === true,
+                cookieFile: path.join(ctx.dataDir || __dirname, 'camera-cookie') });
             cam.start();
             let lastSide = null;
             setInterval(guard('tick', () => {
