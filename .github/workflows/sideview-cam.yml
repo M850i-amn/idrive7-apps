@@ -1,0 +1,38 @@
+# Builds native/amn-sideview-cam (Side View's camera: Robert Nisipeanu's waze-on-cluster, vendor/woc) for the head
+# unit in Ubuntu 18.04 (gcc 7.5, glibc 2.27: the unit's), as its Makefile's target-in-docker does, with its import
+# checks. The binary and its sha256 are uploaded as an artifact; it is committed into native/amn-sideview-cam by a
+# commit that names this run (read-only token here).
+name: sideview-cam
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, sideview-cam]
+    paths: ['native/amn-sideview-cam/vendor/**', '.github/workflows/sideview-cam.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (Ubuntu 18.04)
+        run: |
+          docker run --rm --platform linux/amd64 -v "$PWD/native/amn-sideview-cam:/w" -w /w/vendor/woc \
+            ubuntu:18.04@sha256:dca176c9663a7ba4c1f0e710986f5a25e672842963d95b960191e2d9f7185ebe sh -ec '
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends g++ make binutils python3 python3-pyelftools >/dev/null
+              make -s -j4 BUILD=build CR=/w/vendor/cr target-in-docker
+              cp build/target/waze-on-cluster /w/amn-sideview-cam.bin'
+      - name: Fingerprint
+        run: |
+          cd native/amn-sideview-cam
+          sha256sum amn-sideview-cam.bin | tee amn-sideview-cam.sha256
+          echo "commit ${GITHUB_SHA}, run ${GITHUB_RUN_ID}" >> amn-sideview-cam.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amn-sideview-cam
+          path: |
+            native/amn-sideview-cam/amn-sideview-cam.bin
+            native/amn-sideview-cam/amn-sideview-cam.sha256
+          retention-days: 30
