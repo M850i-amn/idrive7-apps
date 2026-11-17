@@ -29,7 +29,7 @@ const { SidePanel, PW, PH, BW, BH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 const { Camera } = require('./camera');
 
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
@@ -168,7 +168,9 @@ mgu.run({
                 let side = settings.get('cluster') && ready() ? sideNow(now) : null;
                 if (test && now < test.until) side = test.side; else test = null;
                 if (side !== lastSide) { log.info('side: ' + (side || 'none')); lastSide = side; }
-                cam.set(side);
+                // 0.3.1: no side signalled -> the front camera, if Settings say so (never during hazards)
+                const idle = !side && camOn() && settings.get('front') !== false && ready() && !hazards(now);
+                cam.set(side || (idle ? 'front' : null));
                 const nt = !camOn() ? 'Camera off in Settings' : cam.view().kind === 'error' ? cam.view().text : 'Camera starting...';
                 if (nt !== camText) { camText = nt; panel.drawn = null; }
                 panel.show(side, !!side && cam.showing());

@@ -21,7 +21,7 @@ const net = require('net');
 
 const ICAM = 'de.bmw.infotainment.video.cameraproxy.ICAM2Proxy';
 const SOCK = process.env.SIDEVIEW_CAM_SOCK || '/dev/shm/amn-sideview-cam/ctl.sock';
-const VIEW = { left: 3, right: 4 };
+const VIEW = { left: 3, right: 4, front: 1 };   // 0.3.1: front = the 360 system's front camera, without a signal
 const WIRE = { CLIENT_INDIRECT: 1, DR_STANDBY: 50, DR_ACTIVE: 51, MODE_MOSAIK: 50 };
 const RECONNECT_MS = 5000, ATTACH_RETRY_MS = 10000;
 // BMW's own camera screens (reverse, top / 360 view, side view, off-road, remote 3D): Side View never asks then
