@@ -6,7 +6,8 @@
 // Modified 2026-11 for aurelm-emby (GPL-3.0 section 5(a)), from aurelm-airplay's copy (native/uxplay-mgu/video/src):
 // frames in display order (films have B frames) and a film is fitted whole, never cropped.
 // Modified 2026-11 for amn-iptv (GPL-3.0 section 5(a)): 10-bit HEVC (Main 10: most 4K films) decoded as P010 with the
-// hardware's MSB alignment (Shift 1), converted to 8-bit NV12 by VPP.
+// hardware's MSB alignment (Shift 1), converted to 8-bit NV12 by VPP. 0.3.6 (amn-iptv 0.3.6): the 10-bit decoder's
+// surfaces in video memory from our own libva allocator (P010 render targets), height aligned to 32.
 #include "decoder_msdk.h"
 #include "nal_reader.h"
 
@@ -32,7 +33,43 @@ VADisplay vaGetDisplayDRM(int fd);
 VAStatus vaInitialize(VADisplay dpy, int *major_version, int *minor_version);
 VAStatus vaTerminate(VADisplay dpy);
 const char *vaErrorStr(VAStatus error_status);
+/* amn-iptv: surfaces for the 10-bit decoder (va/va.h, VA-API 0.99: the unit's libva 1.9900) */
+typedef unsigned int VASurfaceID;
+typedef enum { VAGenericValueTypeInteger = 1 } VAGenericValueType;
+typedef struct { VAGenericValueType type; union { int i; float f; void *p; void (*fn)(void); } value; } VAGenericValue;
+typedef enum { VASurfaceAttribNone = 0, VASurfaceAttribPixelFormat = 1 } VASurfaceAttribType;
+typedef struct { VASurfaceAttribType type; unsigned int flags; VAGenericValue value; } VASurfaceAttrib;
+#define VA_SURFACE_ATTRIB_SETTABLE 0x00000002
+#define VA_RT_FORMAT_YUV420 0x00000001
+#define VA_RT_FORMAT_YUV420_10BPP 0x00000100
+VAStatus vaCreateSurfaces(VADisplay dpy, unsigned int format, unsigned int width, unsigned int height, VASurfaceID *surfaces,
+                          unsigned int num_surfaces, VASurfaceAttrib *attrib_list, unsigned int num_attribs);
+VAStatus vaDestroySurfaces(VADisplay dpy, VASurfaceID *surfaces, int num_surfaces);
 }
+
+/* amn-iptv: Intel Media SDK 1.24's external frame allocator (mfxvideo.h / mfxstructures.h, MIT; the trimmed headers
+ * here lack it). MFXVideoCORE_SetFrameAllocator is in the unit's libmfxhw64 (abi/libmfx.symbols). */
+extern "C" {
+typedef struct {
+    mfxU32 AllocId;
+    mfxU32 reserved[3];
+    mfxMemId *mids;
+    mfxU16 NumFrameActual;
+    mfxU16 reserved2;
+} mfxFrameAllocResponse;
+typedef struct {
+    mfxU32 reserved[4];
+    mfxHDL pthis;
+    mfxStatus (*Alloc)(mfxHDL pthis, mfxFrameAllocRequest *request, mfxFrameAllocResponse *response);
+    mfxStatus (*Lock)(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr);
+    mfxStatus (*Unlock)(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr);
+    mfxStatus (*GetHDL)(mfxHDL pthis, mfxMemId mid, mfxHDL *handle);
+    mfxStatus (*Free)(mfxHDL pthis, mfxFrameAllocResponse *response);
+} mfxFrameAllocator;
+mfxStatus MFXVideoCORE_SetFrameAllocator(mfxSession session, mfxFrameAllocator *allocator);
+}
+/* the request's Type bits (mfxstructures.h) */
+const mfxU16 kMemDecoderTarget = 0x0010, kMemProcessorTarget = 0x0020, kMemFromDecode = 0x0200, kMemExternal = 0x0002;
 
 namespace woc {
 
@@ -132,6 +169,16 @@ struct Decoder::State {
     mfxExtBuffer *dec_ext[1], *vpp_ext[1];
     std::vector<mfxFrameSurface1> pool;          /* decoder output = VPP input; MSDK owns the memory */
     std::vector<mfxFrameSurface1 *> pool_ptrs;
+    /* amn-iptv 0.3.6: video-memory surfaces from our own libva allocator (the 10-bit tries) */
+    struct VaPool { std::vector<VASurfaceID> ids; std::vector<mfxMemId> mids; mfxU16 w = 0, h = 0; int refs = 0; };
+    std::vector<std::unique_ptr<VaPool>> va_pools;
+    mfxFrameAllocator allocator;
+    std::string va_error;                        /* the last vaCreateSurfaces failure, for the screen */
+    static mfxStatus va_alloc(mfxHDL pthis, mfxFrameAllocRequest *req, mfxFrameAllocResponse *resp);
+    static mfxStatus va_lock(mfxHDL, mfxMemId, mfxFrameData *) { return MFX_ERR_UNSUPPORTED; }
+    static mfxStatus va_gethdl(mfxHDL, mfxMemId mid, mfxHDL *handle) { if (!handle) return MFX_ERR_NULL_PTR; *handle = mid; return MFX_ERR_NONE; }
+    static mfxStatus va_free(mfxHDL pthis, mfxFrameAllocResponse *resp);
+    void va_release_all();
     mfxFrameSurface1 vout;                       /* VPP output, system memory */
     std::vector<uint8_t> vout_mem;
     mfxU16 crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;   /* source rect VPP reads (fill) */
@@ -274,7 +321,7 @@ bool Decoder::State::start(const AccessUnit &au)
                      (hevc && hdr.mfx.CodecProfile == kProfileHevcMain10);
     if (!ten)
         return configure(hdr, 0);
-    static const char *const kTries[] = {"fewest surfaces", "fewest surfaces, one for VPP", "fewest, one for VPP, Shift 0"};
+    static const char *const kTries[] = {"video memory", "video memory, Shift 0", "opaque, height 64"};
     std::string tried;
     for (int v = 1; v <= 3; v++) {
         if (v > 1) {
@@ -304,19 +351,37 @@ bool Decoder::State::start(const AccessUnit &au)
 bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
 {
     dec = hdr;
+    /* 0.3.6: 1 and 2 = video memory from our libva allocator (P010 render targets), Shift 1 / 0, height to 32;
+     * 3 = opaque (MSDK's own surfaces), Shift 1, height to 64. */
+    const bool video = variant == 1 || variant == 2;
     if (variant >= 1) {
         mfxFrameInfo &fi = dec.mfx.FrameInfo;
         fi.FourCC = kFourccP010;
         fi.ChromaFormat = MFX_CHROMAFORMAT_YUV420;
         if (fi.BitDepthLuma <= 8) fi.BitDepthLuma = 10;
         if (fi.BitDepthChroma <= 8) fi.BitDepthChroma = fi.BitDepthLuma;
-        fi.Shift = variant == 3 ? 0 : 1;
+        fi.Shift = variant == 2 ? 0 : 1;
+        const uint32_t a = variant == 3 ? 63u : 31u;
+        fi.Width = (mfxU16)((fi.Width + 15u) & ~15u);
+        fi.Height = (mfxU16)((fi.Height + a) & ~a);
     }
     mfxStatus sts;
+    if (video) {
+        memset(&allocator, 0, sizeof allocator);
+        allocator.pthis = this;
+        allocator.Alloc = va_alloc;
+        allocator.Lock = va_lock;
+        allocator.Unlock = va_lock;
+        allocator.GetHDL = va_gethdl;
+        allocator.Free = va_free;
+        sts = MFXVideoCORE_SetFrameAllocator(session, &allocator);
+        if (sts < MFX_ERR_NONE)
+            return fail(mfx_error("MFXVideoCORE_SetFrameAllocator", sts));
+    }
 
     /* One frame in flight: lowest latency. */
     dec.AsyncDepth = 1;
-    dec.IOPattern = MFX_IOPATTERN_OUT_OPAQUE_MEMORY;
+    dec.IOPattern = video ? MFX_IOPATTERN_OUT_VIDEO_MEMORY : MFX_IOPATTERN_OUT_OPAQUE_MEMORY;
     /* aurelm-emby: display order. A film has B frames: the decoder holds
      * frames until their turn (its DPB), each comes out with its own
      * access unit's timestamp. */
@@ -328,7 +393,7 @@ bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
 
     memset(&vpp, 0, sizeof vpp);
     vpp.AsyncDepth = 1;
-    vpp.IOPattern = MFX_IOPATTERN_IN_OPAQUE_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+    vpp.IOPattern = (video ? MFX_IOPATTERN_IN_VIDEO_MEMORY : MFX_IOPATTERN_IN_OPAQUE_MEMORY) | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
     vpp.vpp.In = in;
     mfxFrameInfo &out = vpp.vpp.Out;
     out = in;
@@ -389,18 +454,31 @@ bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
     if (sts < MFX_ERR_NONE)
         return fail(mfx_error("MFXVideoVPP_QueryIOSurf", sts));
     mfxU16 n = (mfxU16)(dec_req.NumFrameSuggested + vpp_req[0].NumFrameSuggested);
-    if (variant == 1) n = (mfxU16)(dec_req.NumFrameMin + vpp_req[0].NumFrameMin);
-    else if (variant >= 2) n = (mfxU16)(dec_req.NumFrameMin + 1);
+    if (variant >= 1) n = (mfxU16)(dec_req.NumFrameMin + vpp_req[0].NumFrameMin);
+    if (n < dec_req.NumFrameMin + 1) n = (mfxU16)(dec_req.NumFrameMin + 1);
     const std::string poolDesc = " (" + std::to_string(n) + " surfaces " + std::to_string(in.Width) + "x" + std::to_string(in.Height) +
                              ", decoder min " + std::to_string(dec_req.NumFrameMin) + " / suggested " + std::to_string(dec_req.NumFrameSuggested) + ")";
 
     /* Opaque surfaces: the application passes surface headers only, and MSDK
      * allocates the memory behind them when the decoder is initialised. VPP
-     * is given the same headers as its input. */
+     * is given the same headers as its input. 0.3.6: in video memory, the
+     * surfaces are ours (va_alloc), each header naming its VA surface. */
     pool.assign(n, mfxFrameSurface1());
     pool_ptrs.resize(n);
+    mfxFrameAllocResponse resp;
+    memset(&resp, 0, sizeof resp);
+    if (video) {
+        mfxFrameAllocRequest req = dec_req;
+        req.NumFrameMin = req.NumFrameSuggested = n;
+        req.Type = (mfxU16)(req.Type | kMemExternal | kMemFromDecode | kMemDecoderTarget);
+        va_error.clear();
+        sts = va_alloc(this, &req, &resp);
+        if (sts < MFX_ERR_NONE)
+            return fail("our P010 surfaces: " + (va_error.empty() ? mfx_error("alloc", sts) : va_error) + poolDesc);
+    }
     for (mfxU16 i = 0; i < n; i++) {
         pool[i].Info = in;
+        if (video) pool[i].Data.MemId = resp.mids[i];
         pool_ptrs[i] = &pool[i];
     }
     memset(&dec_opaque, 0, sizeof dec_opaque);
@@ -414,14 +492,14 @@ bool Decoder::State::configure(const mfxVideoParam &hdr, int variant)
     vpp_opaque.In = dec_opaque.Out;
     dec_ext[0] = &dec_opaque.Header;
     vpp_ext[0] = &vpp_opaque.Header;
-    dec.ExtParam = dec_ext;
-    dec.NumExtParam = 1;
-    vpp.ExtParam = vpp_ext;
-    vpp.NumExtParam = 1;
+    dec.ExtParam = video ? nullptr : dec_ext;
+    dec.NumExtParam = video ? 0 : 1;
+    vpp.ExtParam = video ? nullptr : vpp_ext;
+    vpp.NumExtParam = video ? 0 : 1;
 
     sts = MFXVideoDECODE_Init(session, &dec);
     if (sts < MFX_ERR_NONE)
-        return fail(mfx_error("MFXVideoDECODE_Init", sts) + poolDesc);
+        return fail(mfx_error("MFXVideoDECODE_Init", sts) + poolDesc + (va_error.empty() ? "" : "; " + va_error));
     sts = MFXVideoVPP_Init(session, &vpp);
     if (sts < MFX_ERR_NONE) {
         MFXVideoDECODE_Close(session);
@@ -457,6 +535,80 @@ void Decoder::State::stop()
     }
     pool.clear();
     pool_ptrs.clear();
+    va_release_all();
+}
+
+/* amn-iptv 0.3.6: the external allocator. The decoder's own Init asks again for the pool configure() made (the
+ * request FROM_DECODE): it gets the same surfaces back, as Intel's samples do. Anything else in video memory gets new
+ * surfaces; system memory is not ours (MFX_ERR_UNSUPPORTED: MSDK allocates it itself). */
+mfxStatus Decoder::State::va_alloc(mfxHDL pthis, mfxFrameAllocRequest *req, mfxFrameAllocResponse *resp)
+{
+    State *st = static_cast<State *>(pthis);
+    if (!st || !req || !resp)
+        return MFX_ERR_NULL_PTR;
+    if (!(req->Type & (kMemDecoderTarget | kMemProcessorTarget)))
+        return MFX_ERR_UNSUPPORTED;
+    const mfxFrameInfo &fi = req->Info;
+    unsigned rt;
+    if (fi.FourCC == kFourccP010) rt = VA_RT_FORMAT_YUV420_10BPP;
+    else if (fi.FourCC == MFX_FOURCC_NV12) rt = VA_RT_FORMAT_YUV420;
+    else return MFX_ERR_UNSUPPORTED;
+    if (req->Type & kMemFromDecode)
+        for (auto &p : st->va_pools)
+            if (p->refs > 0 && p->ids.size() >= req->NumFrameMin && p->w >= fi.Width && p->h >= fi.Height) {
+                p->refs++;
+                resp->mids = p->mids.data();
+                resp->NumFrameActual = (mfxU16)p->mids.size();
+                return MFX_ERR_NONE;
+            }
+    const unsigned n = req->NumFrameSuggested > req->NumFrameMin ? req->NumFrameSuggested : req->NumFrameMin;
+    if (!n)
+        return MFX_ERR_MEMORY_ALLOC;
+    std::unique_ptr<VaPool> p(new VaPool);
+    p->ids.assign(n, 0);
+    VASurfaceAttrib attr;
+    memset(&attr, 0, sizeof attr);
+    attr.type = VASurfaceAttribPixelFormat;
+    attr.flags = VA_SURFACE_ATTRIB_SETTABLE;
+    attr.value.type = VAGenericValueTypeInteger;
+    attr.value.value.i = (int)fi.FourCC;   /* VA_FOURCC_P010 / VA_FOURCC_NV12: the same four characters */
+    const VAStatus vs = vaCreateSurfaces(st->va, rt, fi.Width, fi.Height, p->ids.data(), n, &attr, 1);
+    if (vs != VA_STATUS_SUCCESS) {
+        st->va_error = std::string("vaCreateSurfaces ") + (rt == VA_RT_FORMAT_YUV420_10BPP ? "P010 " : "NV12 ") + std::to_string(n) + "x " +
+                       std::to_string(fi.Width) + "x" + std::to_string(fi.Height) + ": " + vaErrorStr(vs) + " (" + std::to_string(vs) + ")";
+        return MFX_ERR_MEMORY_ALLOC;
+    }
+    p->mids.resize(n);
+    for (unsigned i = 0; i < n; i++) p->mids[i] = &p->ids[i];   /* GetHDL hands MSDK the VASurfaceID* */
+    p->w = fi.Width, p->h = fi.Height, p->refs = 1;
+    resp->mids = p->mids.data();
+    resp->NumFrameActual = (mfxU16)n;
+    st->va_pools.push_back(std::move(p));
+    return MFX_ERR_NONE;
+}
+
+mfxStatus Decoder::State::va_free(mfxHDL pthis, mfxFrameAllocResponse *resp)
+{
+    State *st = static_cast<State *>(pthis);
+    if (!st || !resp)
+        return MFX_ERR_NULL_PTR;
+    for (size_t i = 0; i < st->va_pools.size(); i++) {
+        VaPool &p = *st->va_pools[i];
+        if (p.mids.data() != resp->mids) continue;
+        if (--p.refs <= 0) {
+            vaDestroySurfaces(st->va, p.ids.data(), (int)p.ids.size());
+            st->va_pools.erase(st->va_pools.begin() + i);
+        }
+        return MFX_ERR_NONE;
+    }
+    return MFX_ERR_INVALID_HANDLE;
+}
+
+void Decoder::State::va_release_all()
+{
+    for (auto &p : va_pools)
+        if (!p->ids.empty()) vaDestroySurfaces(va, p->ids.data(), (int)p->ids.size());
+    va_pools.clear();
 }
 
 /* Decodes everything in bs, or with bs null drains the frames the decoder
