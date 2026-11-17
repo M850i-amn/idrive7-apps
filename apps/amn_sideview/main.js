@@ -28,8 +28,13 @@ const { Indicators } = require('./indicators');
 const { SidePanel, PW, PH, BW, BH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 const { Camera } = require('./camera');
+// 0.5.0: the screen in IPTV's design (full screen: its rail, pills and cards), Inter as in HUD and IPTV
+const FS = require('./kit/fullscreen');
+const G = require('./kit/gauges');
+const fonts = require('./kit/fonts');
+const pack = require('./kit/pack');
 
-const VERSION = '0.4.2';
+const VERSION = '0.5.0';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
@@ -37,13 +42,14 @@ const POLL_MS = 300;              // the light status re-read this often (the ca
 const TICK_MS = 100;              // the side decided this often
 
 const C = {
-    top: '#0b1220', bottom: '#030508',
-    text: '#ffffff', dim: '#8e8e93', faint: '#5a5d66',
-    accent: '#ffb000',             // turn-signal amber
+    bg: '#000000', card: '#1c1c1e', pill: '#26262a', rail: '#161618',
+    text: '#ffffff', dim: '#98989f', faint: '#636366',
+    accent: '#ff9f0a', accentDim: '#3a2606',     // the turn signal's amber
+    mLight: '#5fb4ff', mDark: '#1c69d4', mRed: '#e2001a',
     green: '#30d158', amber: '#ff9f0a', red: '#ff453a', grey: '#636366', blue: '#64d2ff',
 };
 const A = (c, a) => { const s = String(c).replace('#', '').slice(0, 6); return '#' + s + ('0' + Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16)).slice(-2); };
-const B = { font: 'bold' }, M = { font: 'label' };
+let B = { font: 'bold' }, M = { font: 'label' };
 
 function fit(cv, s, size, w, o) {
     s = String(s || '');
@@ -182,7 +188,6 @@ mgu.run({
             const teach = (which, label) => guard(which, () => {
                 if (light.state !== 'on') { say('No light status from the car yet - cannot learn', 5000); return; }
                 if (which !== 'off' && !T.base) { say('First tap Signals off, with both signals off', 5000); return; }
-                page = 'main';
                 T.capture(which, Date.now());
                 say(label, CAPTURE_MS);
                 log.info('learn ' + which + ': recording');
@@ -201,7 +206,7 @@ mgu.run({
                 say(on ? 'Night look: on (black and white, bright highlights)' : 'Night look: off (normal colours)');
             }));
             ui.onClick('BTN_CAMS', guard('cams', () => {
-                if (page === 'cams') { page = 'main'; return; }
+                if (page === 'cams') { page = 'cameras'; return; }
                 cams = camprobe.probe();
                 sigs = camprobe.findSignals();
                 page = 'cams';
@@ -211,117 +216,180 @@ mgu.run({
             }));
             settings.onChange(guard('settings', (k) => { if (k === 'cluster') say(settings.get('cluster') ? 'Cluster: on' : 'Cluster: off'); }));
 
-            /* ---------- the centre screen ---------- */
-            function glass(cv, x, y, w, h, r) {
-                cv.roundRect(x, y, w, h, r, A('#ffffff', 0.055));
-                cv.strokeRoundRect(x, y, w, h, r, 1, A('#ffffff', 0.09));
-            }
-            /** The car from above, its two lamps lit live as the car reports them. */
-            function carCard(cv, now) {
-                const x = 48, y = 36, w = 520, h = 372;
-                glass(cv, x, y, w, h, 28);
-                cv.text('SIDE VIEW', x + 36, y + 52, 14, C.accent, Object.assign({ spacing: 2.2 }, B));
-                const cx = x + w / 2, cy = y + 196, bw = 120, bh = 210;
-                cv.roundRect(cx - bw / 2, cy - bh / 2, bw, bh, 40, '#2a3140');
-                cv.roundRect(cx - bw / 2 + 14, cy - bh / 2 + 42, bw - 28, 50, 14, '#0e131c');      // windscreen
-                cv.roundRect(cx - bw / 2 + 16, cy + bh / 2 - 62, bw - 32, 34, 12, '#0e131c');      // rear window
-                cv.roundRect(cx - bw / 2 - 18, cy - bh / 2 + 64, 20, 12, 5, '#2a3140');            // mirrors
-                cv.roundRect(cx + bw / 2 - 2, cy - bh / 2 + 64, 20, 12, 5, '#2a3140');
-                const side = ready() ? sideNow(now) : null;
-                ['left', 'right'].forEach((s) => {
-                    const dir = s === 'left' ? -1 : 1, on = litNow(s, now), held = side === s;
-                    arrow(cv, cx + dir * 150, cy, 74, dir, on ? C.accent : held ? A(C.accent, 0.35) : A('#ffffff', 0.1));
-                });
-                const word = !ready() ? 'Waiting for the turn signals' : side ? (side === 'left' ? 'Left' : 'Right') + ' on the cluster' :
-                    hazards(now) ? 'Hazards - nothing shown' : 'No signal';
-                cv.text(word, cx, y + h - 34, 22, side ? C.text : C.dim, Object.assign({ align: 'center' }, M));
-            }
-            /** Teaching: three steps, each with its state. */
-            function teachCard(cv, now) {
-                const x = 600, y = 36, w = W - 48 - x, h = 372, ix = x + 36, iw = w - 72;
-                glass(cv, x, y, w, h, 28);
-                if (D.live()) {
-                    // 0.2.0: the car says which side: nothing to teach
-                    cv.text('TURN SIGNALS  ·  FROM THE CAR', ix, y + 52, 14, C.accent, Object.assign({ spacing: 2.2 }, B));
-                    const now2 = { left: 'LEFT', right: 'RIGHT', hazard: 'HAZARDS', off: 'OFF', other: 'OFF (another flash)' }[D.state] || '-';
-                    cv.text(now2, ix, y + 140, 64, D.state === 'left' || D.state === 'right' ? C.accent : C.text, B);
-                    wrap(cv, 'The light module reports the turn signals, so there is nothing to teach. Left shows the left side on the cluster, right the right side; hazards show nothing.', 20, iw, 3, M)
-                        .forEach((r, k) => cv.text(r, ix, y + 200 + k * 28, 20, C.dim, M));
-                    cv.text(fit(cv, 'Light module: ' + JSON.stringify(D.raw), 14, iw, M), ix, y + h - 14, 14, C.faint, M);
-                    return;
+            /* ---------- the centre screen: IPTV's design (0.5.0) ---------- */
+            try {
+                const dirs = [path.join(__dirname, 'fonts'), path.join(__dirname, 'data', 'fonts')];
+                const src = pack.open(fs.existsSync(dirs[0] + '.pack') || fs.existsSync(dirs[0]) ? dirs[0] : dirs[1]);
+                if (fonts.register('cl_bold', src.json('cl_bold.json'))) B = { font: 'cl_bold', literal: true };
+                if (fonts.register('cl_med', src.json('cl_med.json'))) M = { font: 'cl_med', literal: true };
+            } catch (e) { log.warn('fonts: ' + e.message); }
+            const btn = (cv, key, x, y, w, h, fn, r) => FS.button(cv, key, x, y, w, h, guard(key, fn), { r: r != null ? r : 16, slop: 4 });
+            const DOT = { on: C.green, wait: C.amber, off: C.grey, error: C.red };
+            const testSide = (side) => { test = { side: side, until: Date.now() + 8000 }; say('Test: the ' + side + ' camera on the cluster for 8 s'); };
+            if (page === 'main') page = 'cameras';
+
+            function icon(cv, kind, cx, cy, col) {
+                if (kind === 'cameras') {          // the car from above
+                    cv.strokeRoundRect(cx - 9, cy - 16, 18, 32, 8, 3.5, col);
+                    cv.line(cx - 6, cy - 5, cx + 6, cy - 5, 3, col);
+                    cv.line(cx - 19, cy - 3, cx - 13, cy - 3, 3, col); cv.line(cx + 13, cy - 3, cx + 19, cy - 3, 3, col);
+                } else if (kind === 'cams') {      // a check list
+                    [-9, 0, 9].forEach((o) => { cv.circle(cx - 11, cy + o, 2.6, col); cv.line(cx - 5, cy + o, cx + 14, cy + o, 3, col); });
                 }
-                cv.text('TEACH THE TURN SIGNALS  ·  ONCE, PARKED', ix, y + 52, 14, C.accent, Object.assign({ spacing: 2.2 }, B));
-                const cap = T.capturing(now);
-                const steps = [
-                    ['off', 'Both signals off, then tap Signals off', !!T.base],
-                    ['left', 'Signal LEFT, then tap Left is on', T.has('left')],
-                    ['right', 'Signal RIGHT, then tap Right is on', T.has('right')],
-                ];
-                steps.forEach((s, k) => {
-                    const sy = y + 104 + k * 62, rec = cap === s[0];
-                    cv.circle(ix + 18, sy - 8, 18, rec ? C.amber : s[2] ? C.green : A('#ffffff', 0.12));
-                    cv.text(rec ? '' : s[2] ? 'OK' : String(k + 1), ix + 18, sy, s[2] && !rec ? 13 : 18, s[2] || rec ? '#000000' : C.dim, Object.assign({ align: 'center' }, B));
-                    cv.text(s[1], ix + 54, sy, 24, rec ? C.text : s[2] ? C.dim : C.text, M);
-                    if (rec) {
-                        const f = Math.min(1, (now - (T.cap.until - CAPTURE_MS)) / CAPTURE_MS), bx = ix + 54, by = sy + 14;
-                        cv.roundRect(bx, by, iw - 54, 6, 3, A('#ffffff', 0.14));
-                        cv.roundRect(bx, by, Math.max(6, f * (iw - 54)), 6, 3, C.amber);
-                    }
+            }
+            function rail(cv, Ar) {
+                const x = Ar.x, w = 108;
+                cv.roundRect(x, Ar.y, w, Ar.h, 28, C.rail);
+                const items = [['cameras', 'Cameras'], ['cams', 'Car check']];
+                const step = 96;
+                items.forEach((it, i) => {
+                    const cy = Ar.y + 24 + i * step + step / 2;
+                    const on = page === it[0];
+                    if (on) cv.roundRect(x + 8, cy - step / 2 + 6, w - 16, step - 12, 20, C.accentDim);
+                    const col = on ? C.accent : '#e8e8ec';
+                    icon(cv, it[0], x + w / 2, cy - 12, col);
+                    cv.text(it[1], x + w / 2, cy + 26, 15, col, Object.assign({ align: 'center' }, on ? B : M));
+                    btn(cv, 'rail_' + it[0], x + 6, cy - step / 2 + 4, w - 12, step - 8, () => {
+                        page = it[0];
+                        if (page === 'cams') { cams = camprobe.probe(); sigs = camprobe.findSignals(); }
+                    }, 20);
                 });
-                const note = T.marks.note ? 'Left and right look the same in the light status: this car may not report them apart.' :
-                    T.ready() ? 'Learned. Side View now follows the signals by itself, from every start of the car.' :
-                    'Push the stalk all the way (not the light tap that flashes three times) so it keeps flashing through each 3-second recording.';
-                wrap(cv, note, 19, iw, 2, M).forEach((r, k) => cv.text(r, ix, y + 300 + k * 26, 19, T.marks.note ? C.amber : C.dim, M));
-                // the light status's latest changes, small: what a photo of the screen tells me
-                const ch = T.changes.slice(-2).map((c) => c.k.replace(/^light\/?/, '') + '=' + JSON.stringify(c.v)).join('   ');
-                if (ch) cv.text(fit(cv, 'Light status: ' + ch, 14, iw, M), ix, y + h - 14, 14, C.faint, M);
+                const by = Ar.y + Ar.h - 34, bx = x + w / 2 - 21;
+                [C.mLight, C.mDark, C.mRed].forEach((c, k) => cv.quad([[bx + k * 15 + 5, by], [bx + k * 15 + 14, by], [bx + k * 15 + 9, by + 14], [bx + k * 15, by + 14]], c));
             }
-            function camsCard(cv) {
-                const x = 600, y = 36, w = W - 48 - x, h = 372, ix = x + 36, iw = w - 72;
-                glass(cv, x, y, w, h, 28);
-                cv.text('CAR CHECK  ·  CAMERA AND TURN SIGNAL', ix, y + 52, 14, C.blue, Object.assign({ spacing: 2.2 }, B));
-                const sg = sigs || camprobe.findSignals();
-                const L = [];
-                L.push(sg.error && !sg.hits.length ? 'Turn-signal fields: ' + sg.error : 'Turn-signal fields found: ' + sg.hits.length);
-                sg.hits.slice(0, 7).forEach((h2) => L.push('  ' + h2));
-                if (sg.hits.length > 7) L.push('  ... and ' + (sg.hits.length - 7) + ' more (in the log)');
-                L.unshift.apply(L, cam.lines());
-                L.slice(0, 11).forEach((l, k) => { const sub = l.charAt(0) === ' ', sz = sub ? 15 : 19; cv.text(fit(cv, l, sz, iw, M), ix, y + 90 + k * 23, sz, sub ? C.dim : C.text, M); });
-                wrap(cv, 'Send a photo of this page: it tells which signal carries the turn signals, and where the camera picture could come from. Tap Car check again to go back.', 16, iw, 2, M)
-                    .forEach((r, k) => cv.text(r, ix, y + h - 40 + k * 22, 16, C.faint, M));
+            function toggle(cv, key, x, y, label, on, fn) {
+                const h = 52, w = cv.textWidth(label, 20, B) + 96;
+                cv.roundRect(x, y, w, h, h / 2, on ? C.accentDim : C.pill);
+                cv.text(label, x + 24, y + h / 2 + 7, 20, on ? C.text : C.dim, B);
+                const sx = x + w - 62, sy = y + h / 2 - 13;
+                cv.roundRect(sx, sy, 46, 26, 13, on ? C.accent : '#3a3a3e');
+                cv.circle(on ? sx + 33 : sx + 13, sy + 13, 10, C.text);
+                btn(cv, key, x, y, w, h, fn, h / 2);
+                return w;
             }
-            function statusRow(cv) {
-                const y = 428, hh = 64, gap = 14, x0 = 48, w = (W - 96 - 3 * gap) / 4;
-                const pv = panel.view();
-                const items = [
-                    ['LIGHT STATUS', light.state === 'on' ? 'green' : light.state === 'error' ? 'red' : 'amber',
-                        light.state === 'on' ? 'From the car  ·  ' + light.n : light.state === 'error' ? 'Not available' + (light.err ? ': ' + light.err : '') : 'Connecting'],
-                    D.live() ? ['TURN SIGNALS', 'green', 'From the car  ·  ' + D.n] :
-                        ['TURN SIGNALS', T.ready() ? 'green' : T.base ? 'amber' : 'grey', T.ready() ? 'Learned' : T.base ? 'Half learned' : D.err ? 'Light module: ' + D.err : 'Signal once to start'],
-                    ['CLUSTER', !settings.get('cluster') ? 'grey' : ({ on: 'green', wait: 'amber', off: 'grey', error: 'red' })[pv.kind] || 'grey', settings.get('cluster') ? pv.text : 'Off in Settings'],
-                    (function () { const cv2 = cam.view(); return ['CAMERA  ·  ' + VERSION, ({ on: 'green', wait: 'amber', off: 'grey', error: 'red' })[cv2.kind] || 'grey', cv2.text]; })(),
-                ];
+            function topBar(cv, Ar, x0) {
+                const y = Ar.y, h = 52;
+                const tw = cv.textWidth('Side View', 30, B) + 82;
+                cv.roundRect(x0, y, tw, h, h / 2, C.pill);
+                cv.circle(x0 + 30, y + h / 2, 17, C.accent);
+                icon(cv, 'cameras', x0 + 30, y + h / 2, '#000000');
+                cv.text('Side View', x0 + 58, y + h / 2 + 11, 30, C.text, B);
+                let x = x0 + tw + 18;
+                x += toggle(cv, 'tg_cam', x, y, 'Camera', camOn(), () => settings.set('camera', !camOn())) + 14;
+                x += toggle(cv, 'tg_front', x, y, 'Front camera', settings.get('front') !== false, () => settings.set('front', settings.get('front') === false)) + 14;
+                toggle(cv, 'tg_night', x, y, 'Night look', settings.get('night') === true, () => settings.set('night', settings.get('night') !== true));
+            }
+            function chips(cv, x0, y, right, items) {
+                const gap = 12, h = 46, w = (right - x0 - gap * (items.length - 1)) / items.length;
                 items.forEach((it, k) => {
                     const x = x0 + k * (w + gap);
-                    glass(cv, x, y, w, hh, hh / 2);
-                    cv.circle(x + 30, y + hh / 2, 7, C[it[1]]);
-                    cv.circle(x + 30, y + hh / 2, 12, A(C[it[1]], 0.18));
-                    cv.text(it[0], x + 52, y + 26, 12, C.dim, Object.assign({ spacing: 1.6 }, B));
-                    cv.text(fit(cv, it[2], 19, w - 70, M), x + 52, y + 50, 19, C.text, M);
+                    cv.roundRect(x, y, w, h, h / 2, C.card);
+                    cv.circle(x + 24, y + h / 2, 6, it[1]);
+                    cv.text(it[0], x + 40, y + h / 2 + 6, 15, C.dim, B);
+                    const lw = cv.textWidth(it[0], 15, B);
+                    cv.text(fit(cv, it[2], 17, w - 60 - lw, M), x + 50 + lw, y + h / 2 + 6, 17, C.text, M);
                 });
             }
 
+            /* the Cameras page */
+            function drawCameras(cv, Ar, x0, now) {
+                const top = Ar.y + 76;
+                const side = ready() ? sideNow(now) : null, testOn = test && now < test.until;
+                const showing = testOn ? test.side : side || (camOn() && settings.get('front') !== false && ready() && !hazards(now) ? 'front' : null);
+                cv.text('On the cluster', x0, top + 4, 26, C.text, B);
+                // the car card
+                const cw = 560, ch = Ar.bottom - top - 88, cx0 = x0, cy0 = top + 22;
+                cv.roundRect(cx0, cy0, cw, ch, 24, C.card);
+                const mx = cx0 + cw / 2, my = cy0 + ch / 2 - 6, bw = 92, bh = 190;
+                cv.roundRect(mx - bw / 2, my - bh / 2, bw, bh, 40, '#2c2c30');
+                cv.roundRect(mx - bw / 2 + 12, my - bh / 2 + 40, bw - 24, 42, 12, '#0e0e10');
+                cv.roundRect(mx - bw / 2 + 14, my + bh / 2 - 52, bw - 28, 28, 10, '#0e0e10');
+                cv.roundRect(mx - bw / 2 - 16, my - bh / 2 + 58, 18, 10, 4, '#2c2c30');
+                cv.roundRect(mx + bw / 2 - 2, my - bh / 2 + 58, 18, 10, 4, '#2c2c30');
+                ['left', 'right'].forEach((s2) => {
+                    const dir = s2 === 'left' ? -1 : 1, on = litNow(s2, now), held = showing === s2;
+                    arrow(cv, mx + dir * 150, my, 70, dir, on ? C.accent : held ? A(C.accent, 0.4) : A('#ffffff', 0.12));
+                });
+                if (showing === 'front') { const ty = my - bh / 2 - 28; cv.line(mx - 22, ty + 14, mx, ty - 8, 6, C.text); cv.line(mx, ty - 8, mx + 22, ty + 14, 6, C.text); }
+                const label = !ready() ? 'Waiting for the turn signals' : hazards(now) ? 'Hazards: nothing shown' :
+                    showing ? (showing === 'front' ? 'Front camera' : showing === 'left' ? 'Left camera' : 'Right camera') + (testOn ? '  ·  test' : '') : 'Nothing on the cluster';
+                cv.text(label, mx, cy0 + ch - 30, 22, showing ? C.text : C.dim, Object.assign({ align: 'center' }, B));
+                // right: the big state, and the tests
+                const rx = cx0 + cw + 48, rw = Ar.right - rx;
+                cv.text('Now showing', rx, cy0 + 40, 18, C.dim, B);
+                const big = !showing ? 'Off' : showing === 'front' ? 'Front' : showing === 'left' ? 'Left' : 'Right';
+                cv.text(big, rx, cy0 + 120, 76, showing ? C.text : C.faint, B);
+                const night = settings.get('night') === true;
+                cv.text(night ? 'Night look: black and white, lit things bright' : 'Normal colours', rx, cy0 + 162, 19, night ? C.blue : C.dim, M);
+                const by = cy0 + 210, pw = Math.min(220, (rw - 16) / 2);
+                [['left', 'Test left'], ['right', 'Test right']].forEach((t, k) => {
+                    const bx = rx + k * (pw + 16);
+                    cv.roundRect(bx, by, pw, 52, 26, k === 0 ? C.accent : C.pill);
+                    cv.text(t[1], bx + pw / 2, by + 33, 20, k === 0 ? '#000000' : C.text, Object.assign({ align: 'center' }, B));
+                    btn(cv, 'test_' + t[0], bx, by, pw, 52, () => testSide(t[0]), 26);
+                });
+                cv.text(fit(cv, 'Left signal: left camera  ·  right: right  ·  none: front  ·  hazards: nothing', 18, rw, M), rx, by + 88, 18, C.dim, M);
+                const pv = panel.view(), cvw = cam.view();
+                chips(cv, x0, Ar.bottom - 46, Ar.right, [
+                    ['Signals', D.live() || T.ready() ? C.green : C.amber, D.live() ? 'From the car' : T.ready() ? 'Learned' : 'Waiting'],
+                    ['Cluster', !settings.get('cluster') ? C.grey : DOT[pv.kind] || C.grey, settings.get('cluster') ? pv.text : 'Off in Settings'],
+                    ['Camera', DOT[cvw.kind] || C.grey, cvw.text],
+                    ['Version', C.grey, VERSION],
+                ]);
+            }
+
+            /* the Car check page */
+            function drawCheck(cv, Ar, x0, now) {
+                const top = Ar.y + 76;
+                cv.text('Car check', x0, top + 4, 26, C.text, B);
+                const lw = (Ar.right - x0 - 24) / 2, ch = Ar.bottom - top - 22;
+                // camera steps
+                cv.roundRect(x0, top + 22, lw, ch, 24, C.card);
+                cv.text('Camera', x0 + 28, top + 64, 20, C.accent, B);
+                cam.lines().forEach((l, k) => {
+                    const p2 = l.indexOf(':'), key = p2 > 0 ? l.slice(0, p2) : l, val = p2 > 0 ? l.slice(p2 + 1).trim() : '';
+                    const y = top + 106 + k * 52;
+                    cv.text(key, x0 + 28, y, 18, C.dim, M);
+                    cv.text(fit(cv, val, 19, lw - 220, M), x0 + 200, y, 19, C.text, M);
+                    if (k < 4) cv.fillRect(x0 + 28, y + 20, lw - 56, 1, '#2c2c30');
+                });
+                // turn signals (and teaching, for a car that does not report them)
+                const tx = x0 + lw + 24;
+                cv.roundRect(tx, top + 22, lw, ch, 24, C.card);
+                cv.text('Turn signals', tx + 28, top + 64, 20, C.accent, B);
+                if (D.live()) {
+                    const st = { left: 'Left', right: 'Right', hazard: 'Hazards', off: 'Off', other: 'Off' }[D.state] || '-';
+                    cv.text(st, tx + 28, top + 150, 60, D.state === 'left' || D.state === 'right' ? C.accent : C.text, B);
+                    wrap(cv, 'From the car\'s light module: nothing to teach.', 19, lw - 56, 2, M).forEach((r, k) => cv.text(r, tx + 28, top + 196 + k * 26, 19, C.dim, M));
+                    cv.text(fit(cv, 'Light module: ' + JSON.stringify(D.raw), 15, lw - 56, M), tx + 28, top + ch - 6, 15, C.faint, M);
+                } else {
+                    const steps = [['off', 'Both signals off', !!T.base], ['left', 'Left signal on', T.has('left')], ['right', 'Right signal on', T.has('right')]];
+                    const cap = T.capturing(now);
+                    steps.forEach((st2, k) => {
+                        const y = top + 100 + k * 66, rec = cap === st2[0];
+                        cv.circle(tx + 46, y + 18, 16, rec ? C.amber : st2[2] ? C.green : '#3a3a3e');
+                        cv.text(st2[1], tx + 76, y + 25, 20, C.text, M);
+                        const bx = tx + lw - 160;
+                        cv.roundRect(bx, y, 132, 40, 20, C.pill);
+                        cv.text(rec ? 'Recording' : 'Record', bx + 66, y + 27, 17, C.text, Object.assign({ align: 'center' }, B));
+                        btn(cv, 'teach_' + st2[0], bx, y, 132, 40, teach(st2[0], st2[0] === 'off' ? 'Recording: keep both signals off' : 'Recording: keep the ' + st2[0].toUpperCase() + ' signal on'), 20);
+                    });
+                }
+            }
+
+            FS.setup(ctx);
             ctx.loop('MAIN', 6, guard('draw', async () => {
-                const now = Date.now(), cv = ctx.canvas(W, H);
-                cv.gradientRect(0, 0, W, H, [[0, C.top], [1, C.bottom]]);
-                carCard(cv, now);
-                if (page === 'cams') camsCard(cv); else teachCard(cv, now);
-                statusRow(cv);
+                const now = Date.now(), cv = ctx.canvas(W, H), Ar = FS.area(cv), fullH = H + (cv.extra || 0);
+                if (cv.chrome) G.frame(cv, ctx.theme(), ['Side View'], 0, []);
+                cv.fillRect(0, 0, W, fullH, C.bg);
+                rail(cv, Ar);
+                const x0 = Ar.x + 128;
+                topBar(cv, Ar, x0);
+                if (page === 'cams') drawCheck(cv, Ar, x0, now); else drawCameras(cv, Ar, x0, now);
                 if (toast && now < toast.until) {
-                    const s = fit(cv, toast.text, 18, 760, M), tw = cv.textWidth(s, 18, M) + 48;
-                    cv.roundRect(W - 48 - tw, 6, tw, 40, 20, '#000000cc');
-                    cv.strokeRoundRect(W - 48 - tw, 6, tw, 40, 20, 1, A('#ffffff', 0.2));
-                    cv.text(s, W - 48 - tw / 2, 32, 18, C.text, Object.assign({ align: 'center' }, M));
+                    const s2 = fit(cv, toast.text, 19, 800, B), tw = cv.textWidth(s2, 19, B) + 52;
+                    cv.roundRect(Ar.right - tw, Ar.bottom - 50, tw, 46, 23, A('#2c2c30', 0.97));
+                    cv.text(s2, Ar.right - tw / 2, Ar.bottom - 20, 19, C.text, Object.assign({ align: 'center' }, B));
                 }
                 await ui.image('MAIN_GFX', cv);
             }));

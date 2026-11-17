@@ -219,6 +219,19 @@ class SportHud {
         return { kind: 'on', text: pre + 'Showing  ·  ' + this.sent + ' frames  ·  HUD ' + (this.tText || 'no state yet') };
     }
     demo(ms) { this.test = Date.now() + (ms || 8000); this.testAt = Date.now(); }
+    /** 0.7.0: the readouts as items ({ label, value, tone }), for the centre screen's tiles. */
+    items() { return (this._frameData(Date.now()).readouts || []).slice(); }
+    /** 0.7.0: the tach as the HUD draws it now (IW x IH), made opaque over black, for the centre screen's preview. */
+    preview() {
+        const f = this._frameData(Date.now());
+        f.blink = true;
+        const cv = new Canvas(IW, IH);
+        Draw.drawHud(cv, f);
+        const d = cv.d;
+        for (let p = 0; p < d.length; p += 4) { const a = d[p + 3] / 255; d[p] = d[p] * a; d[p + 1] = d[p + 1] * a; d[p + 2] = d[p + 2] * a; d[p + 3] = 255; }
+        return cv;
+    }
+    driveMode() { return this.mode; }
 
     /** Called often by main.js: starts / stops the layer and draws. Returns wants(). */
     tick() {
