@@ -53,12 +53,17 @@ COMMON = ('<linearGradient id="chrome" gradientUnits="userSpaceOnUse" x1="0" y1=
           '<stop offset="0.3" stop-color="#fff" stop-opacity="0.06"/><stop offset="1" stop-color="#fff" stop-opacity="0.12"/></linearGradient>')
 
 
+# the owner's initials, small, bottom right: a maker's mark
+MONOGRAM = ('<text x="440" y="452" text-anchor="end" font-family="-apple-system, \'SF Pro Display\', \'Helvetica Neue\', Arial" '
+            'font-size="38" font-weight="600" letter-spacing="3" fill="url(#chrome)" fill-opacity="0.5">AR</text>')
+
+
 def svg(bg, body):
     return ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d"><defs>%s'
             '<clipPath id="t"><path d="%s"/></clipPath></defs><g clip-path="url(#t)">%s'
             '<rect width="512" height="512" fill="url(#toplight)"/><rect width="512" height="512" fill="url(#vig)"/>'
-            '<g filter="url(#sh)">%s</g></g><path d="%s" fill="none" stroke="url(#rimg)" stroke-width="3"/></svg>') % (
-        R, R, R, R, COMMON, SQ, bg, body, SQ)
+            '<g filter="url(#sh)">%s</g>%s</g><path d="%s" fill="none" stroke="url(#rimg)" stroke-width="3"/></svg>') % (
+        R, R, R, R, COMMON, SQ, bg, body, MONOGRAM, SQ)
 
 
 # ---------- direction A: BMW iDrive ----------
