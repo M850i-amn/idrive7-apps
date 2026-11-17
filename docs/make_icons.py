@@ -84,32 +84,39 @@ def m_stripes(x, y, w, h=18, gap=7, slant=0.45):
     return out
 
 
+def m_badge(x, y, h=40, w=9, gap=5, slant=0.35, bg=None):
+    """a small M badge: three slanted bars (light blue, dark blue, red) from x, h tall; bg: a pad behind it"""
+    k = h * slant
+    out = ''
+    if bg:
+        total = 3 * w + 2 * gap + k
+        out += '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="6" fill="%s"/>' % (x - 7, y - 7, total + 14, h + 14, bg)
+    for i, col in enumerate((LBLUE, BLUE, RED)):
+        x0 = x + i * (w + gap)
+        out += '<path d="M%.1f %.1f L%.1f %.1f L%.1f %.1f L%.1f %.1f Z" fill="%s"/>' % (
+            x0 + k, y, x0 + k + w, y, x0 + w, y + h, x0, y + h, col)
+    return out
+
+
+TILE = '#121820'
+
+
 def a_iptv():
     body = '<rect x="96" y="128" width="320" height="216" rx="36" %s/>' % L
     body += '<path d="M206 400 H306" %s/>' % L
-    # the play button filled with the three M stripes, slanted
-    tri = 'M220 176 Q220 160 234 168 L318 222 Q330 236 318 250 L234 304 Q220 312 220 296 Z'
-    body += '<defs><clipPath id="play"><path d="%s"/></clipPath></defs><g clip-path="url(#play)">' % tri
-    # three bands top to bottom, tilted like the M logo's stripes; the middle one thinner (the triangle is widest there)
-    for (y0, y1, col) in ((150, 214, LBLUE), (214, 254, BLUE), (254, 330, RED)):
-        body += '<path d="M200 %d L350 %d L350 %d L200 %d Z" fill="%s"/>' % (y0 + 14, y0 - 14, y1 - 14, y1 + 14, col)
-    body += '</g>'
+    body += '<path d="M226 178 Q226 162 240 170 L318 222 Q330 236 318 250 L240 302 Q226 310 226 294 Z" fill="#fff"/>'
+    # the M badge on the frame's right edge, low, as a car's gill badge
+    body += m_badge(392, 262, 44, 9, 5, 0.32, TILE)
     return svg(A_BG, body)
 
 
 def a_side():
     car = 'M216 112 Q256 92 296 112 Q316 124 316 160 V352 Q316 392 290 404 Q256 416 222 404 Q196 392 196 352 V160 Q196 124 216 112 Z'
-    # three M stripes down the middle, front to back, under the outline
-    body = '<defs><clipPath id="car"><path d="%s"/></clipPath></defs><g clip-path="url(#car)">' % car
-    for i, col in enumerate((LBLUE, BLUE, RED)):
-        x = 239 + i * 12
-        body += '<rect x="%d" y="96" width="10" height="320" fill="%s"/>' % (x, col)
-    body += '</g>'
-    body += '<path d="%s" %s/>' % (car, L)
-    body += '<path d="M214 198 Q256 180 298 198" fill="none" stroke="#11161c" stroke-width="26" stroke-linecap="round"/>'
-    body += '<path d="M218 340 Q256 354 294 340" fill="none" stroke="#11161c" stroke-width="22" stroke-linecap="round"/>'
+    body = '<path d="%s" %s/>' % (car, L)
     body += '<path d="M214 198 Q256 180 298 198" %s/><path d="M218 340 Q256 354 294 340" %s/>' % (L, L)
     body += '<path d="M196 216 H174" %s/><path d="M316 216 H338" %s/>' % (L, L)
+    # the M badge on the car's side, by the front wheel
+    body += m_badge(268, 236, 36, 7, 4, 0.32)
     for s_ in (-1, 1):
         x = 256 + s_ * 134
         body += '<path d="M%d 224 L%d 262 L%d 300" %s/>' % (x, x + s_ * 36, x, L)
