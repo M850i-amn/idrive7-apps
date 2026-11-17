@@ -30,6 +30,10 @@ const RECONNECT_MS = 5000, ATTACH_RETRY_MS = 10000;
 // before: the cluster showed the mosaic (the "flicker"). A view not confirmed in CONFIRM_MS is asked again; after
 // ASK_TRIES of those the claim is given back and a new one made.
 const CONFIRM_MS = 2000, ASK_TRIES = 2, RECLAIM_MS = 10000;
+// 0.5.4: the cluster shows the stream only while the unit shows a view we asked for: its own mosaic (after it restarts
+// when the car is switched on) was the 2 s of flicker at start. A view change is confirmed in ~0.1 s; the picture
+// goes off only after MISMATCH_MS of something else, so a normal switch never blanks.
+const MISMATCH_MS = 350;
 // 0.5.1: every cookie this app holds, kept where a reinstall cannot take it: a Store update may put the app in a new
 // install folder (its data folder, with 0.4.1's cookie file, left behind), and the old claim then kept asking its view
 // (the cluster flickered between two views, and the centre screen showed the camera unit's mosaic). /dev/shm is
@@ -85,7 +89,7 @@ class Camera {
         if (side === this.want) return;
         this.want = side;
         this.log.info('camera: ' + (side ? 'want ' + side + ' (view ' + VIEW[side] + ')' : 'none'));
-        this._send({ cmd: 'cluster', on: side && !this.parking() ? '1' : '0' });
+        this._cluster();
         if (side) this.onAt = Date.now();
         this._ask();
     }
@@ -144,6 +148,27 @@ class Camera {
             this.log.warn('camera: changeState ' + this.askErr);
         });
     }
+    /** The unit shows one of OUR views (any side we ask for, DR_ACTIVE): not its own standby mosaic. */
+    _ours() {
+        const v = this.stateRaw;
+        if (!v || typeof v !== 'object') return false;
+        const p = Number(v.perspective);
+        return /^(DR_ACTIVE|51)$/.test(String(enumName(v.application))) && (p === 1 || p === 3 || p === 4);
+    }
+    /** 0.5.4: the cluster picture on while a side is wanted and the unit shows one of our views (off after MISMATCH_MS
+     *  of anything else, so a switch between our views never blanks it). */
+    _cluster() {
+        const now = Date.now();
+        let on = !!this.want && !this.parking();
+        if (on) {
+            if (this._ours()) this.mismatchAt = 0;
+            else if (!this.mismatchAt) this.mismatchAt = now;
+            if (this.mismatchAt && now - this.mismatchAt > MISMATCH_MS) on = false;
+            if (this.mismatchAt && this.clusterOn !== '1' ) on = false;     // never switched on before the unit shows ours
+        }
+        const v = on ? '1' : '0';
+        if (v !== this.clusterOn && this._send({ cmd: 'cluster', on: v })) this.clusterOn = v;
+    }
     /** The unit shows the view last asked (currentState: DR_ACTIVE and its perspective). */
     _confirmed() {
         const v = this.stateRaw;
@@ -155,6 +180,14 @@ class Camera {
         if (!this.want || !this.asked || this.asked !== this.want || this.asking || this.cookie === null || this.parking()) return;
         if (!/READY/.test(String(this.ready))) return;                   // the unit asleep or busy (car off): nothing to judge
         if (this._confirmed()) { this.askTries = 0; return; }
+        // 0.5.4: the unit back in its own standby (after a restart it ignores the earlier claim): claim afresh now
+        const v = this.stateRaw;
+        if (v && typeof v === 'object' && /^(DR_STANDBY|50)$/.test(String(enumName(v.application))) && Date.now() - this.askedAt > 400
+            && Date.now() - (this.reclaimAt || 0) >= RECLAIM_MS) {
+            this.reclaimAt = Date.now();
+            this._reclaim('the unit went back to its standby');
+            return;
+        }
         if (Date.now() - this.askedAt < CONFIRM_MS) return;
         this.askTries = (this.askTries || 0) + 1;
         if (this.askTries <= ASK_TRIES) {
@@ -221,7 +254,7 @@ class Camera {
         s.on('connect', () => {
             this.sockUp = true; this.sockErr = null; this.buf = '';
             this.log.info('camera tool: connected');
-            this._send({ cmd: 'cluster', on: this.want ? '1' : '0' });
+            this.clusterOn = null; this._cluster();
             this.sentLook = null;
         });
         s.on('data', (d) => {
@@ -256,6 +289,7 @@ class Camera {
         if (this.sockUp && look !== this.sentLook && this._send({ cmd: 'look', on: look })) { this.sentLook = look; this.log.info('camera: look ' + (look === '1' ? 'night' : 'normal')); }
         if (this.enabled()) { this._attach(); this._ask(); this._confirm(); }
         else if (this.cookie !== null) this.release();
+        this._cluster();
     }
 
     /** True while the picture is on the cluster (the tool says so). */
