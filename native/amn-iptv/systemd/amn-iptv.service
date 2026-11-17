@@ -29,7 +29,10 @@ IOSchedulingClass=idle
 # the picture's copy and the sound are ours); nice 10 keeps CarPlay and the HMI first. The frame file (6 MiB)
 # and the stream's queue (40 MiB at most) count here too.
 CPUQuota=200%
-MemoryLimit=256M
+# 0.3.5: 256M -> 768M. The GPU's decode surfaces are charged here too (shmem), and a 4K 10-bit film's (P010,
+# ~19 MiB each, 8 at the fewest, plus the VPP's NV12 and the copies) passed 256M: MFXVideoDECODE_Init answered
+# MFX_ERR_MEMORY_ALLOC every time (car, Nov 16 2026: the unit has ~1.9 GB available).
+MemoryLimit=768M
 TasksMax=48
 # No core dump goes to the crash handler (which restarts the head unit for a program it does not list),
 # so a crash restarts this service and never the head unit.
