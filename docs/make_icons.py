@@ -137,19 +137,112 @@ def a_iptv():
 
 
 def a_side():
-    car = ('M256 92 C228 92 210 100 206 120 C202 140 204 152 200 168 C196 178 196 188 198 200 '
-           'L202 230 C202 250 200 270 200 300 L198 340 C196 360 198 372 202 384 C208 404 228 414 256 414 '
-           'C284 414 304 404 310 384 C314 372 316 360 314 340 L312 300 C312 270 310 250 310 230 '
-           'L314 200 C316 188 316 178 312 168 C308 152 310 140 306 120 C302 100 284 92 256 92 Z')
+    """the car from above (the icons_bmw7 drawing), arrows each side, a small M badge on its right flank"""
+    car = 'M216 112 Q256 92 296 112 Q316 124 316 160 V352 Q316 392 290 404 Q256 416 222 404 Q196 392 196 352 V160 Q196 124 216 112 Z'
     body = '<path d="%s" %s/>' % (car, L)
-    body += '<path d="M220 222 Q256 204 292 222 L286 254 Q256 246 226 254 Z" fill="#0b1015" stroke="url(#chrome)" stroke-width="10" stroke-linejoin="round"/>'
-    body += '<path d="M226 330 Q256 338 286 330 L290 352 Q256 364 222 352 Z" fill="#0b1015" stroke="url(#chrome)" stroke-width="10" stroke-linejoin="round"/>'
-    body += '<path d="M202 232 Q182 228 176 240 Q186 246 202 244 Z" fill="url(#chrome)"/>'
-    body += '<path d="M310 232 Q330 228 336 240 Q326 246 310 244 Z" fill="url(#chrome)"/>'
-    body += m_badge(272, 172, 30, 6, 3.5, 0.32)
+    body += '<path d="M214 198 Q256 180 298 198" %s/><path d="M218 340 Q256 354 294 340" %s/>' % (L, L)
+    body += '<path d="M196 216 H174" %s/><path d="M316 216 H338" %s/>' % (L, L)
+    body += m_badge(268, 236, 36, 7, 4, 0.32)
     for s_ in (-1, 1):
-        x = 256 + s_ * 138
-        body += '<path d="M%d 226 L%d 262 L%d 298" %s/>' % (x, x + s_ * 34, x, L)
+        x = 256 + s_ * 134
+        body += '<path d="M%d 224 L%d 262 L%d 300" %s/>' % (x, x + s_ * 36, x, L)
+    return svg(A_BG, body)
+
+
+def side_v1():
+    """a wing mirror (seen from behind the car) with a camera lens, and the M badge on its arm"""
+    mirror = 'M150 196 C150 160 180 146 236 146 L330 150 C372 152 392 172 392 214 L392 262 C392 300 370 322 326 324 L222 330 C178 332 150 312 150 276 Z'
+    body = '<path d="%s" %s/>' % (mirror, L)
+    body += '<path d="M392 236 L430 236 L436 300" %s/>' % L                      # the arm into the door
+    body += '<circle cx="262" cy="240" r="46" fill="none" stroke="url(#chrome)" stroke-width="12"/>'
+    body += '<circle cx="262" cy="240" r="22" fill="url(#chrome)"/><circle cx="254" cy="232" r="7" fill="#0d1218"/>'
+    body += m_badge(320, 282, 24, 5, 3, 0.32)
+    return svg(A_BG, body)
+
+
+def side_v2():
+    """a camera lens between the two signal chevrons"""
+    body = '<circle cx="256" cy="256" r="98" fill="none" stroke="url(#chrome)" stroke-width="14"/>'
+    body += '<circle cx="256" cy="256" r="60" fill="none" stroke="url(#chrome)" stroke-width="10"/>'
+    body += '<circle cx="256" cy="256" r="28" fill="url(#chrome)"/><circle cx="246" cy="246" r="8" fill="#0d1218"/>'
+    for s_ in (-1, 1):
+        x = 256 + s_ * 150
+        body += '<path d="M%d 214 L%d 256 L%d 298" %s/>' % (x, x + s_ * 38, x, L)
+    body += m_badge(312, 330, 30, 6, 3.5, 0.32)
+    return svg(A_BG, body)
+
+
+def side_v3():
+    """the car from above, minimal, with the two side cameras' views as thin lines from the mirrors"""
+    car = ('M256 110 C226 110 214 122 212 150 L210 360 C210 392 226 404 256 404 C286 404 302 392 302 360 L300 150 C298 122 286 110 256 110 Z')
+    body = '<path d="%s" %s/>' % (car, L)
+    body += '<path d="M222 222 Q256 208 290 222" %s/>' % L
+    body += '<path d="M224 340 Q256 350 288 340" %s/>' % L
+    for s_ in (-1, 1):
+        mx = 256 + s_ * 50
+        body += '<path d="M%d 232 L%d 232" %s/>' % (mx, mx + s_ * 20, L)
+        # the camera's view: two thin lines fanning out
+        for dy, op in ((-70, 1), (70, 1)):
+            body += '<path d="M%d 232 L%d %d" fill="none" stroke="url(#chrome)" stroke-opacity="0.55" stroke-width="7" stroke-linecap="round"/>' % (
+                mx + s_ * 22, mx + s_ * 150, 232 + dy)
+    body += m_badge(270, 160, 28, 5.5, 3, 0.32)
+    return svg(A_BG, body)
+
+
+def side_n1():
+    """the cluster's turn-signal symbol: two arrows, outlined in chrome, the M badge between them"""
+    def arrow(d):  # d = -1 left, 1 right; tip at 256 + d*190
+        tip = 256 + d * 186
+        base = 256 + d * 58
+        neck = 256 + d * 112
+        return ('M%d 256 L%d 186 L%d 222 L%d 222 L%d 290 L%d 290 L%d 326 Z' % (tip, neck, neck, base, base, neck, neck))
+    body = '<path d="%s" %s/>' % (arrow(-1), L)
+    body += '<path d="%s" %s/>' % (arrow(1), L)
+    body += m_badge(238, 238, 36, 7, 4, 0.32)
+    return svg(A_BG, body)
+
+
+def side_n2():
+    """the car from the front: low wide body, twin kidneys, slim lights; a signal chevron each side"""
+    body = '<path d="M150 300 L156 236 Q162 206 196 200 L230 168 Q256 158 282 168 L316 200 Q350 206 356 236 L362 300 Q362 316 346 316 L166 316 Q150 316 150 300 Z" %s/>' % L
+    body += '<path d="M150 300 L150 334 M362 300 L362 334" %s/>' % L
+    # the kidneys
+    body += '<rect x="226" y="236" width="26" height="40" rx="9" fill="none" stroke="url(#chrome)" stroke-width="9"/>'
+    body += '<rect x="260" y="236" width="26" height="40" rx="9" fill="none" stroke="url(#chrome)" stroke-width="9"/>'
+    # slim lights
+    body += '<path d="M176 246 L212 252 M336 246 L300 252" fill="none" stroke="url(#chrome)" stroke-width="9" stroke-linecap="round"/>'
+    body += '<path d="M228 198 Q256 190 284 198" fill="none" stroke="url(#chrome)" stroke-width="8" stroke-linecap="round"/>'
+    for s_ in (-1, 1):
+        x = 256 + s_ * 170
+        body += '<path d="M%d 226 L%d 256 L%d 286" %s/>' % (x, x + s_ * 30, x, L)
+    body += m_badge(320, 284, 18, 4, 2.5, 0.32)
+    return svg(A_BG, body)
+
+
+def side_n3():
+    """the car from behind: a low coupe with L-shaped tail-lights"""
+    body = '<path d="M140 312 L148 252 Q154 222 186 214 L222 176 Q256 164 290 176 L326 214 Q358 222 364 252 L372 312 Q372 330 354 330 L158 330 Q140 330 140 312 Z" %s/>' % L
+    body += '<path d="M150 330 L150 356 M362 330 L362 356" %s/>' % L
+    # the L lights
+    body += '<path d="M164 244 L214 248 L214 270" fill="none" stroke="url(#chrome)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>'
+    body += '<path d="M348 244 L298 248 L298 270" fill="none" stroke="url(#chrome)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>'
+    body += '<path d="M226 206 Q256 196 286 206" fill="none" stroke="url(#chrome)" stroke-width="8" stroke-linecap="round"/>'
+    body += '<rect x="232" y="292" width="48" height="16" rx="4" fill="none" stroke="url(#chrome)" stroke-width="6"/>'
+    body += m_badge(312, 290, 18, 4, 2.5, 0.32)
+    return svg(A_BG, body)
+
+
+def side_n4():
+    """blind-spot symbol: the car from behind, its side camera's zone fanning out beside it"""
+    car = 'M186 300 L192 244 Q196 222 220 216 L240 190 Q256 184 272 190 L292 216 Q316 222 320 244 L326 300 Q326 314 312 314 L200 314 Q186 314 186 300 Z'
+    body = '<path d="M330 250 L452 196 L452 350 L330 300 Z" fill="url(#chrome)" fill-opacity="0.16"/>'
+    body += '<path d="M330 250 L452 196 M330 300 L452 350" fill="none" stroke="url(#chrome)" stroke-opacity="0.6" stroke-width="7" stroke-linecap="round"/>'
+    body += '<path d="M180 250 L60 196 L60 350 L180 300 Z" fill="url(#chrome)" fill-opacity="0.16"/>'
+    body += '<path d="M180 250 L60 196 M180 300 L60 350" fill="none" stroke="url(#chrome)" stroke-opacity="0.6" stroke-width="7" stroke-linecap="round"/>'
+    body += '<path d="%s" %s/>' % (car, L)
+    body += '<path d="M196 314 L196 336 M316 314 L316 336" %s/>' % L
+    body += '<path d="M204 250 L232 252 M308 250 L280 252" fill="none" stroke="url(#chrome)" stroke-width="9" stroke-linecap="round"/>'
+    body += m_badge(286, 284, 16, 3.5, 2.2, 0.32)
     return svg(A_BG, body)
 
 
@@ -211,6 +304,14 @@ def render(svgs, px=R):
 
 
 if __name__ == '__main__':
+    if sys.argv[1] == '--side':
+        imgs = render([side_n1(), side_n2(), side_n3(), side_n4()], 280)
+        sheet = Image.new('RGBA', (4 * 300 + 20, 470), (10, 14, 20, 255))
+        for i, im in enumerate(imgs):
+            sm = im.resize((140, 140), Image.BOX)
+            big = sm.resize((280, 280), Image.LANCZOS)
+            sheet.paste(big, (20 + i * 300, 10), big); sheet.paste(sm, (90 + i * 300, 310), sm)
+        sheet.save(sys.argv[2]); print('ok'); sys.exit(0)
     if sys.argv[1] == '--apply':
         imgs = render([f() for _, f in SETS[sys.argv[2]]], 280)
         for (app, _), im in zip(SETS[sys.argv[2]], imgs):
