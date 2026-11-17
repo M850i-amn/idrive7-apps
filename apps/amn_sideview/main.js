@@ -36,7 +36,7 @@ const G = require('./kit/gauges');
 const fonts = require('./kit/fonts');
 const pack = require('./kit/pack');
 
-const VERSION = '0.5.2';
+const VERSION = '0.5.3';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];

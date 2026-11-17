@@ -29,7 +29,7 @@ const RECONNECT_MS = 5000, ATTACH_RETRY_MS = 10000;
 // on (CAMERA_INITIALIZING, then DR_STANDBY / view 7, its rotating mosaic) and from then on ignored the claim made
 // before: the cluster showed the mosaic (the "flicker"). A view not confirmed in CONFIRM_MS is asked again; after
 // ASK_TRIES of those the claim is given back and a new one made.
-const CONFIRM_MS = 2000, ASK_TRIES = 2;
+const CONFIRM_MS = 2000, ASK_TRIES = 2, RECLAIM_MS = 10000;
 // 0.5.1: every cookie this app holds, kept where a reinstall cannot take it: a Store update may put the app in a new
 // install folder (its data folder, with 0.4.1's cookie file, left behind), and the old claim then kept asking its view
 // (the cluster flickered between two views, and the centre screen showed the camera unit's mosaic). /dev/shm is
@@ -53,7 +53,7 @@ class Camera {
         this.want = null; this.asked = null; this.askErr = null;           // the side wanted, the one last asked of the unit
         this.sock = null; this.sockUp = false; this.buf = ''; this.tool = null; this.toolAt = 0; this.sockErr = null;
         this.onAt = 0;
-        this.askedAt = 0; this.askTries = 0; this.restarted = false;     // 0.5.2: the unit's confirmation of a view
+        this.askedAt = 0; this.askTries = 0; this.reclaimAt = 0;     // 0.5.2: the unit's confirmation of a view
     }
 
     start() {
@@ -63,17 +63,9 @@ class Camera {
         if (!sig || !sig.watch) { this.pxErr = 'no SOME/IP in this app'; return; }
         sig.watch(ICAM, '1', {
             currentState: (v) => { const s = this._fmt(v); if (s !== this.state) this.log.info('camera unit: ' + s); this.state = s; this.stateRaw = v; },
-            cameraProxyState: (v) => {
-                const s = String(enumName(v));
-                if (s !== this.ready) {
-                    this.log.info('camera unit state: ' + s);
-                    // 0.5.2: the unit restarted (car switched on): what was asked before counts for nothing now
-                    if (/INITIALIZING|INHIBITED|INACTIVE/.test(s) && this.cookie !== null && this.asked) { this.restarted = true; this.log.info('camera unit restarted: asking again when ready'); }
-                    // a restart voids every claim (seen on the car Nov 17): a new one at once
-                    if (/READY/.test(s) && this.restarted) { this.restarted = false; this._reclaim('the unit restarted'); }
-                }
-                this.ready = s;
-            },
+            // 0.5.3: no reaction to CAMERA_INITIALIZING: every change of view passes through it for a few ms (0.5.2 took
+            // that for a restart and claimed afresh on each switch: 4-6 black flashes). _confirm() alone decides.
+            cameraProxyState: (v) => { const s = String(enumName(v)); if (s !== this.ready) this.log.info('camera unit state: ' + s); this.ready = s; },
             streamInfo: (v) => { if (v && typeof v === 'object') this.stream = v.imageWidth + 'x' + v.imageHeight + ' ' + v.framesPerSecond + ' fps'; },
         }, this.log, { pollMs: 2000 }).then((r) => {
             if (r.error || !r.proxy) { this.pxErr = r.error || 'not available'; this.log.warn('camera unit: ' + this.pxErr); return; }
@@ -160,7 +152,8 @@ class Camera {
     }
     /** 0.5.2: a view not confirmed in CONFIRM_MS is asked again; ASK_TRIES of those and the claim is made afresh. */
     _confirm() {
-        if (!this.want || !this.asked || this.asked !== this.want || this.asking || this.cookie === null || this.restarted || this.parking()) return;
+        if (!this.want || !this.asked || this.asked !== this.want || this.asking || this.cookie === null || this.parking()) return;
+        if (!/READY/.test(String(this.ready))) return;                   // the unit asleep or busy (car off): nothing to judge
         if (this._confirmed()) { this.askTries = 0; return; }
         if (Date.now() - this.askedAt < CONFIRM_MS) return;
         this.askTries = (this.askTries || 0) + 1;
@@ -169,6 +162,8 @@ class Camera {
             this.asked = undefined; this._ask();
             return;
         }
+        if (Date.now() - (this.reclaimAt || 0) < RECLAIM_MS) { this.askTries = 0; return; }
+        this.reclaimAt = Date.now();
         this._reclaim('the unit ignores it');
     }
     /** Give the claim back and make a new one (then the wanted view is asked with it). */

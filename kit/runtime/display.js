@@ -218,6 +218,9 @@ class Display {
      * its slim bar: the HMI's focus events light the one the knob is on and a press goes through the HMI.
      */
     ctl() { const g = this.gpu; return !!(g && (!g.native || !g.info || g.info.controller)); }
+    /** amn (Nov 17 2026): the kit's own bar in place of the HMI's: with the controller held, or always for a full-screen
+     *  app (touch runs it; without the gate the HMI's bar showed behind the page, under the app's own menu). */
+    barOwn() { return this.ctl() || !!(this.screen && this.screen.fullscreen); }
     /** The kit runs the screen: mgu-render/1 with touch, full-screen layout. */
     own() { return !!(this.gpu && this.gpu.ready && !this.blocked && this.gpu.native && this.gpu.touch && this.place && this.place.full); }
     /** own() but for the placement, which depends on it (the bar's height): the renderer and layout allow it. */
@@ -520,7 +523,7 @@ class Display {
     /** The HMI's own bar buttons: hidden where the kit runs the screen (its bar, tabs and page buttons
      *  take their place), so none shows around an HMI popup; shown for every other path. */
     _hmiBar() {
-        const hide = this.ownable() && !this.blocked && this.ctl();
+        const hide = this.ownable() && !this.blocked && this.barOwn();
         if (this.hmiBarHidden === hide) return;
         this.hmiBarHidden = hide;
         (this.screen.buttons || []).forEach((b) => { if (this.ui.visible) this.ui.visible(b[0], !hide); });
@@ -917,7 +920,7 @@ class Display {
      * with the controller, turn the pages); they stay in the HMI's bar for the other paths.
      */
     buttons() {
-        const own = this.ownable() && this.ctl();
+        const own = this.ownable() && this.barOwn();
         if (this._btns && this._btnsOwn === own) return this._btns;
         this._btnsOwn = own;
         const m = new Recorder(1, 1);
