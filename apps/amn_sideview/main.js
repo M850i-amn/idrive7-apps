@@ -29,7 +29,7 @@ const { SidePanel, PW, PH, BW, BH } = require('./sidepanel');
 const camprobe = require('./camprobe');
 const { Camera } = require('./camera');
 
-const VERSION = '0.3.1';
+const VERSION = '0.4.0';
 const W = 1600, H = 520;
 const LIGHT = ['de.bmw.infotainment.vehicle.Vehicle2', '1', 'statusLightStatus'];
 const BODY_LIGHT = ['de.bmw.body.Light', '1', ['StatusFunctionsIndicators', 'StatusFunctionsIndicators2']];
@@ -154,7 +154,7 @@ mgu.run({
             const panel = new SidePanel({ log: log, app: 'amn_sideview', draw: panelImage });
             const holdMs = () => Number(settings.get('hold')) || 1500;
             const camOn = () => settings.get('camera') !== false;
-            const cam = new Camera({ ctx: ctx, log: log, enabled: camOn });
+            const cam = new Camera({ ctx: ctx, log: log, enabled: camOn, night: () => settings.get('night') === true });
             cam.start();
             let lastSide = null;
             setInterval(guard('tick', () => {
@@ -193,6 +193,11 @@ mgu.run({
                 const now = Date.now(), side = test && test.side === 'left' ? 'right' : 'left';
                 test = { side: side, until: now + 8000 };
                 say('Test: the ' + side + ' camera on the cluster for 8 s');
+            }));
+            ui.onClick('BTN_NIGHT', guard('night', () => {
+                const on = settings.get('night') !== true;
+                settings.set('night', on);
+                say(on ? 'Night look: on (black and white, bright highlights)' : 'Night look: off (normal colours)');
             }));
             ui.onClick('BTN_CAMS', guard('cams', () => {
                 if (page === 'cams') { page = 'main'; return; }

@@ -33,6 +33,7 @@ class Camera {
     /** o: ctx (signals), log, enabled() -> bool */
     constructor(o) {
         this.ctx = o.ctx; this.log = o.log; this.enabled = o.enabled || (() => true);
+        this.night = o.night || (() => false); this.sentLook = null;   // 0.4.0: the night look (black and white, bright highlights)
         this.px = null; this.pxErr = null; this.cookie = null; this.attaching = false; this.attachErr = null; this.attachAt = 0;
         this.state = null; this.ready = null; this.stream = null;          // the camera unit's currentState / cameraProxyState / streamInfo
         this.want = null; this.asked = null; this.askErr = null;           // the side wanted, the one last asked of the unit
@@ -135,6 +136,7 @@ class Camera {
             this.sockUp = true; this.sockErr = null; this.buf = '';
             this.log.info('camera tool: connected');
             this._send({ cmd: 'cluster', on: this.want ? '1' : '0' });
+            this.sentLook = null;
         });
         s.on('data', (d) => {
             this.buf += d;
@@ -164,6 +166,8 @@ class Camera {
 
     _tick() {
         if (!this.sock && Date.now() - (this.sockTry || 0) > RECONNECT_MS) { this.sockTry = Date.now(); this._connect(); }
+        const look = this.night() ? '1' : '0';
+        if (this.sockUp && look !== this.sentLook && this._send({ cmd: 'look', on: look })) { this.sentLook = look; this.log.info('camera: look ' + (look === '1' ? 'night' : 'normal')); }
         if (this.enabled()) { this._attach(); this._ask(); }
         else if (this.cookie !== null) this.release();
     }

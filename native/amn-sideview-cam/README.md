@@ -13,7 +13,7 @@ For the app **Side View**: while you signal, the left (or right) camera in the i
 
 The program is **Robert Nisipeanu's waze-on-cluster** (`vendor/woc`, GPL-3.0-or-later, Copyright (C) 2026 Robert
 Nisipeanu) with the client and kit of his **cluster-render** (`vendor/cr`, GPL-3.0-or-later / MPL-2.0 for the client
-library), copied unchanged from github.com/robertnisipeanu/idrive-apps at the commit in `vendor/UPSTREAM`. Side View
+library), copied from github.com/robertnisipeanu/idrive-apps at the commit in `vendor/UPSTREAM`. One change (0.2.0, marked in each file's header): the night look in `vendor/woc/src/video_producer.cpp` (a contrast curve on the luma, the colour removed) and its control command `{"cmd":"look","on":"0"|"1"}` in `vendor/woc/src/main.cpp`. Side View
 runs it with its own settings (`amn-sideview-cam.conf`): the camera stream instead of CarPlay's, no CarPlay
 connection to watch, the picture down a second after the camera stops. Their licences are in `vendor/woc/LICENSE`,
 `vendor/cr/LICENSE` and `vendor/cr/LICENSES`.

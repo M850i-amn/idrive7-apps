@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
+// Modified 2026-11 for amn-sideview-cam (GPL-3.0 section 5(a)): Side View's night look (control {"cmd":"look"}).
 /* VideoProducer: the CarPlay cluster stream from capture to decoded frames.
  * It owns the AVB, UDP and FIFO sources, the RTP depacketiser (rtp_h264.h)
  * and the MSDK/VAAPI decoder (decoder_msdk.h), and keeps the newest decoded
@@ -78,6 +79,11 @@
 #include "udp_source.h"
 
 namespace woc {
+
+/* amn-sideview-cam: the night look - black and white, dark crushed, lit things toward white - applied to
+ * each picture in place before it is packed for the cluster; off by default. */
+void set_night_look(bool on);
+bool night_look();
 
 using crk::Spread;
 

@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
+// Modified 2026-11 for amn-sideview-cam (GPL-3.0 section 5(a)): Side View's night look (control {"cmd":"look"}).
 #include "video_producer.h"
+
+#include <atomic>
+#include <cmath>
+#include <cstring>
 
 #include <algorithm>
 #include <cstdio>
@@ -403,8 +408,42 @@ void VideoProducer::on_decoded(const VideoFrame &f)
     on_frame(f, false);
 }
 
+namespace {
+std::atomic<bool> g_night{false};
+/* the night curve: below ~12 % black, a lifted gamma (0.6) over the rest and 1.5x contrast, so what the
+ * headlights light (people, animals, signs) comes out near white against a dark ground */
+struct NightLut {
+    uint8_t v[256];
+    NightLut()
+    {
+        for (int i = 0; i < 256; i++) {
+            double x = i / 255.0;
+            x = x < 0.12 ? 0.0 : (x - 0.12) / 0.88;
+            x = std::pow(x, 0.6) * 1.5 - 0.15;
+            v[i] = (uint8_t)(x <= 0 ? 0 : x >= 1 ? 255 : (int)(x * 255.0 + 0.5));
+        }
+    }
+};
+const NightLut kNight;
+void apply_night(std::vector<uint8_t> *atlas, uint32_t w, uint32_t h)
+{
+    if (!atlas || atlas->size() < (size_t)w * crk::atlas_height(h))
+        return;
+    uint8_t *p = atlas->data();
+    const size_t ny = (size_t)w * h;
+    for (size_t i = 0; i < ny; i++)
+        p[i] = kNight.v[p[i]];
+    std::memset(p + ny, 128, (size_t)w * (h / 2));   /* U and V neutral: no colour */
+}
+}  // namespace
+
+void set_night_look(bool on) { g_night.store(on); }
+bool night_look() { return g_night.load(); }
+
 void VideoProducer::on_frame(const VideoFrame &f, bool late)
 {
+    if (f.atlas && g_night.load())
+        apply_night(f.atlas, f.w, f.h);
     if (!f.atlas && !f.same) {
         std::lock_guard<std::mutex> lock(frame_mutex_);
         timing_.frame(f.held);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Robert Nisipeanu
+// Modified 2026-11 for amn-sideview-cam (GPL-3.0 section 5(a)): Side View's night look (control {"cmd":"look"}).
 /* waze-on-cluster: decode the captured CarPlay 2nd-screen H.264 (the Waze/Maps
  * cluster map) and hand it to the shared cluster renderer (cluster-render),
  * which draws it in a cluster slot. The service runs from boot, so it decodes
@@ -118,6 +119,9 @@ public:
         } else if (cmd == "guide" && hide != msg.end() && guide_->set(hide->second)) {
             log_info("guide: BMW's turn box %s while the map shows", guide_->hide() ? "hidden" : "shown");
             feeds_->set_guide_hold(guide_->hide());
+        } else if (cmd == "look" && on != msg.end() && (on->second == "0" || on->second == "1")) {
+            set_night_look(on->second == "1");   /* amn-sideview-cam */
+            log_info("look: %s", on->second == "1" ? "night" : "normal");
         } else if (cmd == "cluster" && on != msg.end() && (on->second == "0" || on->second == "1")) {
             feeds_->set_cluster(on->second == "1");
         } else if (cmd == "hud" && (on != msg.end() || pct != msg.end() || hx != msg.end() || hy != msg.end() ||
