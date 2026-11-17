@@ -369,6 +369,21 @@ def fit_to_unit(manifest, spec, catalog=None):
         if entry is None:
             continue
         unit = have.get(iface)
+        # an interface that "extends" another has its parent's fields, methods and events too (BMW's generator
+        # writes them into the app's config: ICAM2Proxy gets CameraProxy's clientAttach / clientDetach, Nov 16 2026)
+        seen = set()
+        while isinstance(unit, dict) and isinstance(unit.get('extends'), str) and unit['extends'] not in seen:
+            seen.add(unit['extends'])
+            parent = have.get(unit['extends'])
+            if not isinstance(parent, dict):
+                break
+            merged = dict(unit)
+            for part in ('fields', 'methods', 'events'):
+                a, b = parent.get(part), unit.get(part)
+                if isinstance(a, dict) or isinstance(b, dict):
+                    merged[part] = dict(a if isinstance(a, dict) else {}, **(b if isinstance(b, dict) else {}))
+            merged['extends'] = parent.get('extends')
+            unit = merged
         if not isinstance(unit, dict):
             if iface in reason:
                 del proxies[iface]
