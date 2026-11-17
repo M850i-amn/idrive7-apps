@@ -20,7 +20,13 @@
  *   fm.status()       { kind: 'film', state, error, film, pos, duration, audioError, video, at }
  *   sink: playback.js's, start(id, env) with the player's MGU_INPUT_URL and MGU_START_S
  *
- * States: loading, playing, buffering, paused, ended, error, idle. Plain Node 8.
+ * 0.3.7 (amn-iptv 0.3.7): the car's graphics driver makes no 10-bit surface ("the requested RT Format is not supported",
+ * Nov 17 2026), so a 4K HDR film (HEVC Main 10) cannot show a picture here; the screen is 1920x720 anyway. When the
+ * decoder refuses a film as 10-bit, its player is stopped and o.findAlt(film, tried) looks for the same film in
+ * another version of the account (1080p first, the same language); found, that one plays from the same second
+ * (st.note says so); not found, one plain line. A version that is refused too is passed over for the next.
+ *
+ * States: loading, playing, buffering, paused, ended, error, idle, finding (an HD version). Plain Node 8.
  */
 const http = require('http');
 const crypto = require('crypto');
@@ -30,14 +36,17 @@ const RESTARTS = 3;
 const RESTART_WINDOW_MS = 120000;
 const END_MARGIN_S = 45;           // ended this close to the duration: the film is over (credits cut short)
 const FATAL = /only H\.264|framing|no picture or sound|does not open: (Invalid data|Server returned 4)/;
+const TEN_BIT = /10-bit HEVC refused/;
+const NO_HD = '4K HDR (10-bit) does not play in this car, and the account has no HD version of this film';
 
 function createFilm(o) {
     const xt = o.xt, log = o.log || (() => {}), sink = o.sink, now = o.now || Date.now;
+    const findAlt = o.findAlt || null;
     const prefs = o.prefs || (() => null);
     let ids = FIRST_ID, cur = null, server = null, listening = null;
     // videoError: the decoder's refusal; shown / decerr: pictures shown and failed to decode (the player's ticks), for "No picture"
     const st = { kind: 'film', state: 'idle', error: null, film: null, pos: 0, duration: null, audioError: null, video: null, videoError: null,
-        shown: 0, decerr: 0, profile: null, at: now() };
+        shown: 0, decerr: 0, profile: null, note: null, at: now() };
     const set = (state, error) => { st.state = state; st.error = error || null; st.at = now(); };
 
     /* ---------- the player's source on 127.0.0.1 ---------- */
@@ -97,8 +106,9 @@ function createFilm(o) {
     function play(f) {
         stop();
         const film = { kind: f.kind === 'series' ? 'series' : 'movie', id: Number(f.id), ext: String(f.ext || 'mp4'), name: String(f.name || '').slice(0, 120) };
-        cur = { film, token: crypto.randomBytes(16).toString('hex'), pid: 0, pos: 0, restarts: [] };
+        cur = { film, token: crypto.randomBytes(16).toString('hex'), pid: 0, pos: 0, restarts: [], tried: (f.tried || []).concat([film.id]) };
         st.film = film; st.duration = Number(f.duration) > 0 ? Number(f.duration) : null; st.video = null;
+        st.note = f.note || null;
         log('film: ' + film.kind + ' ' + film.id + ' from ' + Math.floor(Number(f.start) || 0) + ' s');
         startPlayer(cur, Number(f.start) || 0);
     }
@@ -143,6 +153,7 @@ function createFilm(o) {
             if (typeof ev.decerr === 'number') st.decerr = ev.decerr;
         } else if (ev.ev === 'decoder' && ev.ok === false) {
             st.videoError = ev.error || 'the decoder did not start';
+            if (TEN_BIT.test(st.videoError) && c.film.kind === 'movie' && !c.finding) hdVersion(c);
         } else if (ev.ev === 'audio' && ev.ok === false) {
             st.audioError = ev.error || 'this sound does not play here';
         } else if (ev.ev === 'error') {
@@ -160,6 +171,24 @@ function createFilm(o) {
             log('film: the player ended at ' + Math.floor(c.pos) + ' s (' + (c.lastError || ev.ev) + '): again from there');
             startPlayer(c, c.pos);
         }
+    }
+    /** 0.3.7: the film refused as 10-bit: stop it and play its HD version, if the account has one */
+    function hdVersion(c) {
+        c.finding = true;
+        if (c.pid) { sink.stop(c.pid); c.pid = 0; }
+        c.done = true;
+        st.videoError = null;
+        if (!findAlt) { set('error', NO_HD); return; }
+        set('finding');
+        st.note = 'This 4K HDR film does not play in this car: looking for its HD version';
+        log('film: ' + c.film.id + ' is 10-bit: looking for an HD version');
+        findAlt(c.film, c.tried, (p) => { if (cur === c && st.state === 'finding') st.note = 'Looking for the HD version of this film (' + p + ')'; }).then((alt) => {
+            if (cur !== c) return;
+            if (!alt) { log('film: no HD version of ' + c.film.id); st.note = null; set('error', NO_HD); return; }
+            log('film: HD version ' + alt.id + ' ' + alt.name);
+            play({ kind: 'movie', id: alt.id, ext: alt.ext, name: alt.name, start: c.pos, duration: st.duration, tried: c.tried,
+                note: '4K HDR does not play in this car: playing ' + alt.name });
+        }, (e) => { if (cur === c) { st.note = null; set('error', NO_HD + ' (' + e.message + ')'); } });
     }
     return {
         play, seek, pause, resume, stop, onPlayer,

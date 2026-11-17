@@ -43,7 +43,7 @@ const LOGO = require('./logos');
 const KB = require('./keyboard');
 const qrcodegen = require('./qrcodegen');
 
-const VERSION = '0.3.7';
+const VERSION = '0.3.8';
 const W = 1600, H = 520;
 const VID = 7, VIDEO_FILE = '/dev/shm/mgu-video-amn-iptv';
 const C = {
@@ -947,7 +947,9 @@ mgu.run({
                 let msg = null, sub = null;
                 if (!subject || pb.state === 'idle') { msg = 'Nothing playing'; sub = 'Choose a channel, a film or a series.'; }
                 else if (pb.state === 'error') { msg = film ? 'This one did not play' : 'This channel did not play'; sub = pb.error || ''; }
-                else if (pb.state === 'loading') { msg = (film ? 'Starting ' : 'Tuning ') + short(subject.name) + '...'; sub = pb.error ? 'Reconnecting: ' + pb.error : ''; }
+                // 0.3.8: a 4K HDR film the car cannot show: the service looks for its HD version in the account
+                else if (pb.state === 'finding') { msg = 'Finding the HD version...'; sub = pb.note || '4K HDR does not play in this car.'; }
+                else if (pb.state === 'loading') { msg = (film ? 'Starting ' : 'Tuning ') + short((pb.note && pb.film && pb.film.name) || subject.name) + '...'; sub = pb.error ? 'Reconnecting: ' + pb.error : pb.note || ''; }
                 else if (pb.state === 'ended') { msg = 'The end'; sub = 'Play starts it again; the arrow goes back.'; }
                 else if (!allowed) { msg = 'The picture shows while parked'; sub = 'The sound goes on. A passenger can watch while driving: Settings, Video while driving.'; }
                 else if (!pic && gpuVideo()) { msg = 'Starting the picture...'; sub = ''; }
@@ -963,7 +965,9 @@ mgu.run({
                 // the controls (the arrow among them) only after a tap: the picture, or the message, stays clean otherwise
                 const show = Date.now() < overlayUntil || panel;
                 // why there is no sound, or no picture, said over the picture
-                const snd = soundProblem(pb) || pictureProblem(pb);
+                // 0.3.8: the HD version playing instead of the 4K one: said for 10 s at the top
+                if (pb.note && pb.note !== noteSeen) { noteSeen = pb.note; noteUntil = Date.now() + 10000; }
+                const snd = soundProblem(pb) || pictureProblem(pb) || (pb.note && Date.now() < noteUntil && pb.state === 'playing' ? pb.note : null);
                 if (snd && !msg) {
                     // 0.3.3: up to three lines (the decoder's own error is long: it names each 10-bit try)
                     const rows = wrapText(cv, snd, 19, W - 400, M, 3);
@@ -1030,7 +1034,7 @@ mgu.run({
                 picBtn();
             }
             // what keeps a playing film's picture away (sound playing): the decoder's refusal, or no picture decoded in 8 s
-            let blindSince = 0;
+            let blindSince = 0, noteSeen = null, noteUntil = 0;
             function pictureProblem(pb) {
                 if (!pb || pb.kind !== 'film' || pb.state !== 'playing') { blindSince = 0; return null; }
                 const v = pb.video || {}, what = (v.codec || '?').toUpperCase() + ' ' + (v.w || '?') + 'x' + (v.h || '?');

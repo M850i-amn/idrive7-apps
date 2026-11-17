@@ -62,7 +62,7 @@ const pb = createPlayback({ tvh: xt, log, sink, profiles: () => null, retryMs: p
 
 // films and series (film.js): the player reads the film from the account itself, through 127.0.0.1
 let lastPrefs = null;
-const fm = createFilm({ xt, log, sink, prefs: () => lastPrefs });
+const fm = createFilm({ xt, log, sink, prefs: () => lastPrefs, findAlt: (f, tried, progress) => hdVersionOf(f, tried, progress) });
 
 function status() { send({ ev: 'status', status: JSON.parse(JSON.stringify(st)) }); }
 function setState(state, error) { st.state = state; st.error = error || null; st.since = Date.now(); status(); }
@@ -207,7 +207,48 @@ function indexOf(kind, langs) {
     }).catch((e) => { ix.running = false; ix.error = e.message; ix.failedAt = Date.now(); log(kind + ' index: ' + e.message); });
     return ix;
 }
+let lastLangs = 'all';   // 0.3.7: the languages the app last searched in (its setting): the HD-version search uses that index
+/* 0.3.7: a 4K HDR film's other versions. A title as the account writes it ("EN The Hobbit An Unexpected Journey - 2012
+ * [4K]") -> its language ("EN") and a key without the language, tags, quality words and year; the same key and year
+ * in another entry is the same film. Best first: the same language, 1080p / FHD, 720p, then any; never a 4K / UHD /
+ * HDR / 10-bit one, nor one already tried. Answers from the films index (search's), which it waits for (built with
+ * nothing playing), at most 4 minutes. */
+const UHD = /\b(4k|uhd|2160p?|hdr10\+?|hdr|dolby ?vision|dovi|10 ?bits?)\b/i;
+const QWORDS = /\b(4k|uhd|2160p?|1080p?|720p?|480p?|fhd|hd|sd|hdr10\+?|hdr|dv|dolby ?vision|dovi|hevc|h ?26[45]|x26[45]|10 ?bits?|remux|bluray|web ?dl|webrip|multi ?subs?|multi|vostfr|subbed|dubbed|imax|extended|remastered)\b/g;
+function langOf(name) { const m = /^\s*[\[|(]?\s*([A-Z]{2,3})\b/.exec(String(name || '')); return m ? m[1] : ''; }
+function altKey(name) {
+    let s = String(name || '').replace(/^\s*[\[|(]?\s*[A-Z]{2,3}\s*[\]|)]?\s*[-:|]?\s+/, '');
+    s = s.toLowerCase().replace(/\[[^\]]*\]|\([^)]*\)/g, ' ').replace(/\b(19|20)\d\d\b/g, ' ').replace(/[._]/g, ' ');
+    s = s.replace(QWORDS, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+    return s;
+}
+function bestAlt(items, film, tried) {
+    const key = altKey(film.name), lang = langOf(film.name), year = (/\b(19|20)\d\d\b/.exec(film.name) || [])[0];
+    if (!key) return null;
+    let best = null, bestScore = -1;
+    items.forEach((x) => {
+        if (tried.indexOf(x.id) >= 0 || UHD.test(x.name) || altKey(x.name) !== key) return;
+        if (year && x.year && String(x.year) !== year) return;
+        const score = (langOf(x.name) === lang ? 10 : 0) + (/1080|fhd/i.test(x.name) ? 4 : /720/.test(x.name) ? 2 : 1) - (x.hevc ? 1 : 0);
+        if (score > bestScore) { best = x; bestScore = score; }
+    });
+    return best;
+}
+async function hdVersionOf(film, tried, progress) {
+    const t0 = Date.now();
+    for (;;) {
+        const ix = indexOf('movies', lastLangs);
+        if (ix.error && !ix.items.size) throw new Error(ix.error);
+        const items = Array.from(ix.items.values());
+        const found = bestAlt(items, film, tried || []);
+        if (found || !ix.running) return found;
+        if (Date.now() - t0 > 240000) return found;
+        if (progress) progress(ix.done + ' of ' + (ix.total || '?') + ' categories');
+        await new Promise((r) => setTimeout(r, 2000));
+    }
+}
 function vodSearch(kind, q, langs) {
+    if (LANGS.SETS[langs]) lastLangs = langs;
     const ix = indexOf(kind === 'series' ? 'series' : 'movies', LANGS.SETS[langs] ? langs : 'all');
     if (ix.error && !ix.items.size) return Promise.reject(new Error(ix.error));
     const items = rank(Array.from(ix.items.values()), q, 60).map((x) => { const v = Object.assign({}, x); delete v.key; return v; });
