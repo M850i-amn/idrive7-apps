@@ -35,7 +35,11 @@ const rec = require('./record');
 
 // the Store's renderer (mgu-render) first, then the community socket (an older renderer, or mgu-render's
 // link): an older renderer still installed beside mgu-render never gets the apps
-const SOCKETS = process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] : ['/run/mgu-render/render.sock', '/run/mgu-renderd/renderd.sock'];
+// amn (Nov 17 2026): the community renderer (idrive7-renderd, the kit's own) first, as upstream does; mgu-store's
+// mgu-render only where it is missing. On the car with both installed, mgu-render named our apps in front but never
+// drew them (no X_STATE after the first, every app in the HMI's frame with its bar buttons), while idrive7-renderd
+// drew every other kit app (Car Lyrics: touch diverted, controller held).
+const SOCKETS = process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] : ['/run/mgu-renderd/renderd.sock', '/run/mgu-render/render.sock'];
 const SOCKET = SOCKETS[0];
 const isSocket = (p) => { try { return fs.statSync(p).isSocket(); } catch (e) { return false; } };
 const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, DROP_LAYER: 8, IMAGE: 9, GRAB: 10 };
