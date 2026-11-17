@@ -38,36 +38,58 @@ def arc(cx, cy, r, a0, a1):
     return 'M%.1f %.1f A%.1f %.1f 0 %d 1 %.1f %.1f' % (x0, y0, r, r, large, x1, y1)
 
 
+COMMON = ('<linearGradient id="chrome" gradientUnits="userSpaceOnUse" x1="0" y1="90" x2="0" y2="430">'
+          '<stop offset="0" stop-color="#ffffff"/><stop offset="0.55" stop-color="#eef2f6"/><stop offset="1" stop-color="#b9c4cf"/></linearGradient>'
+          '<filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur in="SourceAlpha" stdDeviation="5"/>'
+          '<feOffset dy="6"/><feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer>'
+          '<feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
+          '<filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="7" result="g"/>'
+          '<feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
+          '<radialGradient id="toplight" cx="0.5" cy="0" r="0.8"><stop offset="0" stop-color="#ffffff" stop-opacity="0.13"/>'
+          '<stop offset="1" stop-color="#ffffff" stop-opacity="0"/></radialGradient>'
+          '<radialGradient id="vig" cx="0.5" cy="0.45" r="0.72"><stop offset="0.6" stop-color="#000" stop-opacity="0"/>'
+          '<stop offset="1" stop-color="#000" stop-opacity="0.45"/></radialGradient>'
+          '<linearGradient id="rimg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.32"/>'
+          '<stop offset="0.3" stop-color="#fff" stop-opacity="0.06"/><stop offset="1" stop-color="#fff" stop-opacity="0.12"/></linearGradient>')
+
+
 def svg(bg, body):
-    return ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d"><defs>'
-            '<clipPath id="t"><path d="%s"/></clipPath></defs><g clip-path="url(#t)">%s%s</g></svg>') % (R, R, R, R, SQ, bg, body)
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d"><defs>%s'
+            '<clipPath id="t"><path d="%s"/></clipPath></defs><g clip-path="url(#t)">%s'
+            '<rect width="512" height="512" fill="url(#toplight)"/><rect width="512" height="512" fill="url(#vig)"/>'
+            '<g filter="url(#sh)">%s</g></g><path d="%s" fill="none" stroke="url(#rimg)" stroke-width="3"/></svg>') % (
+        R, R, R, R, COMMON, SQ, bg, body, SQ)
 
 
 # ---------- direction A: BMW iDrive ----------
 A_BG = ('<defs><linearGradient id="a" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#232c36"/>'
         '<stop offset="0.6" stop-color="#11161c"/><stop offset="1" stop-color="#07090c"/></linearGradient></defs>'
         '<rect width="512" height="512" fill="url(#a)"/>'
-        '<path d="M70 5 H442" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>')
+        )
 BLUE, LBLUE, RED = '#1c69d4', '#5fb4ff', '#e2001a'
 SW = 15
-L = 'fill="none" stroke="#fff" stroke-width="%d" stroke-linecap="round" stroke-linejoin="round"' % SW
+L = 'fill="none" stroke="url(#chrome)" stroke-width="%d" stroke-linecap="round" stroke-linejoin="round"' % SW
 
 
 def a_hud():
     cx, cy, r = 256, 300, 156
     body = '<path d="%s" %s/>' % (arc(cx, cy, r, 160, 316), L)
-    # the speed line's end in the M colours: light blue, dark blue, red
+    m = ''
     for a0, a1, col in ((318, 338, LBLUE), (340, 360, BLUE), (362, 380, RED)):
-        body += '<path d="%s" fill="none" stroke="%s" stroke-width="%d" stroke-linecap="butt"/>' % (arc(cx, cy, r, a0, a1), col, SW + 4)
+        m += '<path d="%s" fill="none" stroke="%s" stroke-width="%d" stroke-linecap="butt"/>' % (arc(cx, cy, r, a0, a1), col, SW + 4)
+    body += '<g filter="url(#glow)">%s</g>' % m
     for i, a in enumerate(range(160, 317, 22)):
         rr0, rr1 = r - 32, r - (54 if i % 2 == 0 else 44)
         ra = math.radians(a)
-        body += '<path d="M%.1f %.1f L%.1f %.1f" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"/>' % (
-            cx + rr0 * math.cos(ra), cy + rr0 * math.sin(ra), cx + rr1 * math.cos(ra), cy + rr1 * math.sin(ra))
+        body += '<path d="M%.1f %.1f L%.1f %.1f" fill="none" stroke="url(#chrome)" stroke-width="%d" stroke-linecap="round"/>' % (
+            cx + rr0 * math.cos(ra), cy + rr0 * math.sin(ra), cx + rr1 * math.cos(ra), cy + rr1 * math.sin(ra), 10 if i % 2 == 0 else 8)
     a = math.radians(300)
-    body += '<path d="M%d %d L%.1f %.1f" fill="none" stroke="#fff" stroke-width="11" stroke-linecap="round"/>' % (
-        cx, cy, cx + 130 * math.cos(a), cy + 130 * math.sin(a))
-    body += '<circle cx="%d" cy="%d" r="17" fill="#fff"/>' % (cx, cy)
+    tip = (cx + 136 * math.cos(a), cy + 136 * math.sin(a))
+    nx, ny = -math.sin(a), math.cos(a)
+    body += '<path d="M%.1f %.1f L%.1f %.1f L%.1f %.1f Z" fill="url(#chrome)"/>' % (
+        cx + nx * 9, cy + ny * 9, tip[0], tip[1], cx - nx * 9, cy - ny * 9)
+    body += '<circle cx="%d" cy="%d" r="22" fill="#0d1218" stroke="url(#chrome)" stroke-width="8"/>' % (cx, cy)
+    body += '<circle cx="%d" cy="%d" r="6" fill="%s"/>' % (cx, cy, RED)
     body += '<path d="M186 396 H326" %s/>' % L
     return svg(A_BG, body)
 
@@ -104,22 +126,30 @@ TILE = '#121820'
 def a_iptv():
     body = '<rect x="96" y="128" width="320" height="216" rx="36" %s/>' % L
     body += '<path d="M206 400 H306" %s/>' % L
-    body += '<path d="M226 178 Q226 162 240 170 L318 222 Q330 236 318 250 L240 302 Q226 310 226 294 Z" fill="#fff"/>'
+    body += '<path d="M226 178 Q226 162 240 170 L318 222 Q330 236 318 250 L240 302 Q226 310 226 294 Z" fill="url(#chrome)"/>'
+    body += ('<defs><clipPath id="scr"><rect x="104" y="136" width="304" height="200" rx="30"/></clipPath>'
+             '<linearGradient id="gl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.10"/>'
+             '<stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>'
+             '<path d="M96 128 L300 128 L150 344 L96 344 Z" fill="url(#gl)" clip-path="url(#scr)"/>')
     # the M badge on the frame's right edge, low, as a car's gill badge
     body += m_badge(392, 262, 44, 9, 5, 0.32, TILE)
     return svg(A_BG, body)
 
 
 def a_side():
-    car = 'M216 112 Q256 92 296 112 Q316 124 316 160 V352 Q316 392 290 404 Q256 416 222 404 Q196 392 196 352 V160 Q196 124 216 112 Z'
+    car = ('M256 92 C228 92 210 100 206 120 C202 140 204 152 200 168 C196 178 196 188 198 200 '
+           'L202 230 C202 250 200 270 200 300 L198 340 C196 360 198 372 202 384 C208 404 228 414 256 414 '
+           'C284 414 304 404 310 384 C314 372 316 360 314 340 L312 300 C312 270 310 250 310 230 '
+           'L314 200 C316 188 316 178 312 168 C308 152 310 140 306 120 C302 100 284 92 256 92 Z')
     body = '<path d="%s" %s/>' % (car, L)
-    body += '<path d="M214 198 Q256 180 298 198" %s/><path d="M218 340 Q256 354 294 340" %s/>' % (L, L)
-    body += '<path d="M196 216 H174" %s/><path d="M316 216 H338" %s/>' % (L, L)
-    # the M badge on the car's side, by the front wheel
-    body += m_badge(268, 236, 36, 7, 4, 0.32)
+    body += '<path d="M220 222 Q256 204 292 222 L286 254 Q256 246 226 254 Z" fill="#0b1015" stroke="url(#chrome)" stroke-width="10" stroke-linejoin="round"/>'
+    body += '<path d="M226 330 Q256 338 286 330 L290 352 Q256 364 222 352 Z" fill="#0b1015" stroke="url(#chrome)" stroke-width="10" stroke-linejoin="round"/>'
+    body += '<path d="M202 232 Q182 228 176 240 Q186 246 202 244 Z" fill="url(#chrome)"/>'
+    body += '<path d="M310 232 Q330 228 336 240 Q326 246 310 244 Z" fill="url(#chrome)"/>'
+    body += m_badge(272, 172, 30, 6, 3.5, 0.32)
     for s_ in (-1, 1):
-        x = 256 + s_ * 134
-        body += '<path d="M%d 224 L%d 262 L%d 300" %s/>' % (x, x + s_ * 36, x, L)
+        x = 256 + s_ * 138
+        body += '<path d="M%d 226 L%d 262 L%d 298" %s/>' % (x, x + s_ * 34, x, L)
     return svg(A_BG, body)
 
 
